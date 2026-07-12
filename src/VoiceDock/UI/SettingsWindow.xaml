@@ -1,0 +1,58 @@
+<Window x:Class="VoiceDock.UI.SettingsWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="VoiceDock 設定"
+        Width="440" Height="520" MinWidth="380" MinHeight="360"
+        Style="{StaticResource WindowStyle}"
+        WindowStartupLocation="CenterScreen">
+    <!-- タブではなく 1 本の縦リストをスクロールする形式。値の変更は即時反映（保存ボタンなし） -->
+    <ScrollViewer VerticalScrollBarVisibility="Auto">
+        <StackPanel Margin="24,20">
+
+            <TextBlock Text="設定" FontSize="18" FontWeight="Bold"/>
+            <TextBlock Text="変更は即時に反映されます" Style="{StaticResource SubText}" Margin="0,4,0,16"/>
+
+            <!-- ホットキー -->
+            <TextBlock Text="ホットキー" FontWeight="Bold"/>
+            <TextBlock Text="録音開始/停止のトグルキー。ボックスを選択してキーを押すと変更されます"
+                       Style="{StaticResource SubText}" Margin="0,2,0,6"/>
+            <TextBox x:Name="HotkeyBox" IsReadOnly="True" Cursor="Hand"
+                     PreviewKeyDown="HotkeyBox_PreviewKeyDown"/>
+            <TextBlock x:Name="HotkeyWarning" Foreground="{StaticResource WarnBrush}"
+                       TextWrapping="Wrap" Margin="0,4,0,0" Visibility="Collapsed"/>
+
+            <Separator Margin="0,16" Background="{StaticResource BorderBrush}"/>
+
+            <!-- モデルサイズ -->
+            <TextBlock Text="モデルサイズ" FontWeight="Bold"/>
+            <TextBlock Text="大きいほど高精度ですが、変換に時間がかかります。変更後の初回利用時に自動ダウンロードされます"
+                       Style="{StaticResource SubText}" Margin="0,2,0,6"/>
+            <ComboBox x:Name="ModelCombo" SelectionChanged="ModelCombo_SelectionChanged"/>
+
+            <Separator Margin="0,16" Background="{StaticResource BorderBrush}"/>
+
+            <!-- マイクデバイス -->
+            <TextBlock Text="マイクデバイス" FontWeight="Bold"/>
+            <TextBlock Text="使用するマイクを選択します" Style="{StaticResource SubText}" Margin="0,2,0,6"/>
+            <ComboBox x:Name="MicCombo" SelectionChanged="MicCombo_SelectionChanged"/>
+
+            <Separator Margin="0,16" Background="{StaticResource BorderBrush}"/>
+
+            <!-- スタートアップ登録 -->
+            <TextBlock Text="スタートアップ登録" FontWeight="Bold"/>
+            <TextBlock Text="Windows 起動時に VoiceDock を自動起動します" Style="{StaticResource SubText}" Margin="0,2,0,6"/>
+            <CheckBox x:Name="StartupCheck" Content="自動起動を有効にする"
+                      Checked="StartupCheck_Changed" Unchecked="StartupCheck_Changed"/>
+
+            <Separator Margin="0,16" Background="{StaticResource BorderBrush}"/>
+
+            <!-- 辞書登録（別画面への導線） -->
+            <TextBlock Text="辞書登録" FontWeight="Bold"/>
+            <TextBlock Text="社内用語・人名などの誤認識対策ワードは辞書管理画面から登録します"
+                       Style="{StaticResource SubText}" Margin="0,2,0,6"/>
+            <Button x:Name="OpenDictionaryButton" Content="辞書管理を開く"
+                    HorizontalAlignment="Left" Click="OpenDictionaryButton_Click"/>
+
+        </StackPanel>
+    </ScrollViewer>
+</Window>

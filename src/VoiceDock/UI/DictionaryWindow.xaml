@@ -1,0 +1,43 @@
+<Window x:Class="VoiceDock.UI.DictionaryWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="VoiceDock 辞書管理"
+        Width="560" Height="560" MinWidth="420" MinHeight="360"
+        Style="{StaticResource WindowStyle}"
+        WindowStartupLocation="CenterScreen"
+        Closing="Window_Closing">
+    <Grid Margin="20,16">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+
+        <TextBlock Grid.Row="0" Text="辞書管理" FontSize="18" FontWeight="Bold"/>
+        <TextBlock Grid.Row="1" Style="{StaticResource SubText}" Margin="0,4,0,10"
+                   Text="誤認識語 → 正しい語 の対応を登録します。登録単語は認識ヒント(initial_prompt)にも使われます。Excel から 2 列のセル範囲をコピーして、この表に Ctrl+V で貼り付けできます。"/>
+
+        <!-- 大量登録を想定した 2 列テーブル形式 -->
+        <DataGrid Grid.Row="2" x:Name="Grid"
+                  AutoGenerateColumns="False" CanUserAddRows="True"
+                  CanUserSortColumns="False" CanUserReorderColumns="False"
+                  SelectionUnit="CellOrRowHeader"
+                  Background="{StaticResource PanelBrush}">
+            <DataGrid.Columns>
+                <DataGridTextColumn Header="誤認識語" Binding="{Binding Wrong, UpdateSourceTrigger=PropertyChanged}" Width="*"/>
+                <DataGridTextColumn Header="正しい語" Binding="{Binding Correct, UpdateSourceTrigger=PropertyChanged}" Width="*"/>
+            </DataGrid.Columns>
+        </DataGrid>
+
+        <StackPanel Grid.Row="3" Orientation="Horizontal" Margin="0,12,0,0">
+            <Button Content="行を削除" Click="DeleteRows_Click"/>
+            <Button Content="CSV エクスポート" Margin="8,0,0,0" Click="Export_Click"/>
+            <Button Content="CSV インポート" Margin="8,0,0,0" Click="Import_Click"/>
+        </StackPanel>
+
+        <TextBlock Grid.Row="4" Style="{StaticResource SubText}" Margin="0,12,0,0"
+                   Text="【運用上の注意】エクスポートした CSV には社内用語・人名が含まれます。社外への持ち出しや共有 NAS 等での取り扱い・保存先には十分注意してください。"/>
+    </Grid>
+</Window>

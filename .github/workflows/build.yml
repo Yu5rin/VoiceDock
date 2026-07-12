@@ -1,0 +1,38 @@
+# Windows 向け単一 exe のビルド検証とアーティファクト生成
+name: build
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: .NET SDK のセットアップ
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+
+      - name: ビルド
+        run: dotnet build src/VoiceDock/VoiceDock.csproj -c Release
+
+      - name: 単一 exe の発行
+        run: >
+          dotnet publish src/VoiceDock/VoiceDock.csproj
+          -c Release
+          -r win-x64
+          --self-contained true
+          -p:PublishSingleFile=true
+          -p:IncludeNativeLibrariesForSelfExtract=true
+          -o publish
+
+      - name: アーティファクトのアップロード
+        uses: actions/upload-artifact@v4
+        with:
+          name: VoiceDock-win-x64
+          path: publish/VoiceDock.exe

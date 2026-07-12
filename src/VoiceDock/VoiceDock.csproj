@@ -1,0 +1,26 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <RootNamespace>VoiceDock</RootNamespace>
+    <AssemblyName>VoiceDock</AssemblyName>
+    <UseWPF>true</UseWPF>
+    <UseWindowsForms>true</UseWindowsForms>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <!-- Linux 等の非 Windows 環境でも win 向けビルドを可能にする -->
+    <EnableWindowsTargeting>true</EnableWindowsTargeting>
+    <Version>0.3.0</Version>
+    <Product>VoiceDock</Product>
+    <Description>Whisper を用いたローカル完結の音声入力ツール</Description>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="NAudio" Version="2.2.1" />
+    <PackageReference Include="Whisper.net" Version="1.7.4" />
+    <PackageReference Include="Whisper.net.Runtime" Version="1.7.4" />
+  </ItemGroup>
+
+</Project>

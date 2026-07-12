@@ -18,6 +18,12 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <!-- WinForms の暗黙 global using は WPF の型 (Application/Brush 等) と衝突するため外す -->
+    <Using Remove="System.Windows.Forms" />
+    <Using Remove="System.Drawing" />
+  </ItemGroup>
+
+  <ItemGroup>
     <PackageReference Include="NAudio" Version="2.2.1" />
     <PackageReference Include="Whisper.net" Version="1.7.4" />
     <PackageReference Include="Whisper.net.Runtime" Version="1.7.4" />

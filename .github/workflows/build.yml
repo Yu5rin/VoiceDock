@@ -7,6 +7,11 @@ on:
     tags: ["v*"]
   pull_request:
   workflow_dispatch:
+    inputs:
+      version:
+        description: "リリースするバージョンタグ (例: v0.3.0)"
+        required: true
+        default: "v0.3.0"
 
 jobs:
   build:
@@ -38,14 +43,24 @@ jobs:
           name: VoiceDock-win-x64
           path: publish/VoiceDock.exe
 
-  # v* タグの push 時に単一 exe をビルドして GitHub Release を作成・添付する
+  # v* タグの push 時、または手動実行 (Run workflow) 時に、単一 exe をビルドして GitHub Release を作成・添付する
   release:
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
     runs-on: windows-latest
     permissions:
       contents: write
     steps:
       - uses: actions/checkout@v4
+
+      - name: リリースするバージョンタグの決定
+        id: ver
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "tag=${{ github.event.inputs.version }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "tag=${{ github.ref_name }}" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: .NET SDK のセットアップ
         uses: actions/setup-dotnet@v4
@@ -64,19 +79,20 @@ jobs:
 
       - name: リリース用に exe をバージョン名でリネーム
         shell: pwsh
-        run: Copy-Item publish/VoiceDock.exe "publish/VoiceDock-${{ github.ref_name }}-win-x64.exe"
+        run: Copy-Item publish/VoiceDock.exe "publish/VoiceDock-${{ steps.ver.outputs.tag }}-win-x64.exe"
 
       - name: GitHub Release の作成
         uses: softprops/action-gh-release@v2
         with:
-          name: VoiceDock ${{ github.ref_name }}
+          tag_name: ${{ steps.ver.outputs.tag }}
+          name: VoiceDock ${{ steps.ver.outputs.tag }}
           generate_release_notes: true
-          files: publish/VoiceDock-${{ github.ref_name }}-win-x64.exe
+          files: publish/VoiceDock-${{ steps.ver.outputs.tag }}-win-x64.exe
           body: |
-            Whisper を用いたローカル完結の音声入力ツール VoiceDock の ${{ github.ref_name }} リリースです。
+            Whisper を用いたローカル完結の音声入力ツール VoiceDock の ${{ steps.ver.outputs.tag }} リリースです。
 
             ## 導入
-            - `VoiceDock-${{ github.ref_name }}-win-x64.exe` をダウンロードし、任意の場所に置いて実行してください（署名なし・インストーラーなし）。
+            - `VoiceDock-${{ steps.ver.outputs.tag }}-win-x64.exe` をダウンロードし、任意の場所に置いて実行してください（署名なし・インストーラーなし）。
             - 対応 OS: Windows 10 / 11。初回起動時に Whisper モデル（初期値 medium）を自動ダウンロードします（要ネットワーク）。
             - 本ビルドは CPU ランタイム同梱です（GPU/CUDA 非同梱）。
 

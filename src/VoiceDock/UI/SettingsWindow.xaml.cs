@@ -30,7 +30,7 @@ public partial class SettingsWindow : Window
         foreach (var size in ModelDownloader.ModelSizes)
             ModelCombo.Items.Add(size);
         ModelCombo.SelectedItem = settings.Current.ModelSize;
-        if (ModelCombo.SelectedItem == null) ModelCombo.SelectedItem = "medium";
+        if (ModelCombo.SelectedItem == null) ModelCombo.SelectedItem = "small";
 
         MicCombo.Items.Add(DefaultDeviceLabel);
         foreach (var (_, name) in AudioRecorder.GetDevices())

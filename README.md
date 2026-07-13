@@ -7,7 +7,7 @@ Whisper（[Whisper.net](https://github.com/sandrohanea/whisper.net)）を用い�
 
 ## 主な機能
 
-- **ホットキーでトグル録音**: 1 回押すと録音開始、もう一度押すと停止して文字起こし（初期値: `Ctrl+Alt+Space`、設定で変更可・衝突チェック付き）
+- **ホットキーでトグル録音**: 1 回押すと録音開始、もう一度押すと停止して文字起こし（初期値: `Ctrl+Space`、設定で変更可・衝突チェック付き）
 - **直接キー入力**: 認識結果をフォーカス中のテキスト入力欄へ SendInput で直接流し込み（クリップボードは使用しない）
 - **Whisper によるバッチ文字起こし**: 日本語固定・VAD フィルタ（無音区間除去）・句読点の自動挿入
 - **30 秒無音の自動停止**: 無音が 30 秒続くと自動的に録音を停止して文字起こし
@@ -32,8 +32,8 @@ Whisper（[Whisper.net](https://github.com/sandrohanea/whisper.net)）を用い�
 ## 使い方
 
 1. 起動するとタスクトレイに常駐します（初回はスタートアップ登録が有効になります）
-2. 初回起動時に Whisper モデル（初期値: medium）が自動ダウンロードされます（要ネットワーク。以降はオフラインで動作）
-3. テキスト入力欄にカーソルを置き、ホットキー（初期値: `Ctrl+Alt+Space`）を押すと録音開始
+2. 初回起動時に Whisper モデル（初期値: small）が自動ダウンロードされます（要ネットワーク。以降はオフラインで動作）
+3. テキスト入力欄にカーソルを置き、ホットキー（初期値: `Ctrl+Space`）を押すと録音開始
 4. もう一度ホットキーを押すと録音停止 → 文字起こし → その場に直接入力されます
 
 タスクトレイアイコンの右クリックメニューから「設定」「辞書管理」「ログ表示」「終了」を開けます。
@@ -58,16 +58,25 @@ Whisper（[Whisper.net](https://github.com/sandrohanea/whisper.net)）を用い�
 .NET 8 SDK が必要です。単一 exe の生成:
 
 ```powershell
-dotnet publish src/VoiceDock/VoiceDock.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -o publish
+dotnet publish src/VoiceDock/VoiceDock.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:EnableCompressionInSingleFile=true -o publish
 ```
 
 `publish/VoiceDock.exe` が生成されます。GitHub Actions（`.github/workflows/build.yml`）でも同じ手順でビルドし、アーティファクトとして exe を取得できます。
 
+## パフォーマンスとモデル選択
+
+- 文字起こしは CPU 実行時、利用可能な CPU コア（コア数 − 1）を使って処理します
+- **既定モデルは `small`**（速度と精度のバランス）。もっと速くしたい場合は設定画面で `base` / `tiny` に、精度を優先したい場合は `medium` / `large-v3` に変更できます（大きいモデルほど CPU では遅くなります）
+- 発話が長いほど処理時間は伸びます。短文入力用途では `small` + 短い発話が快適です
+- さらに高速化したい場合は GPU (CUDA) 対応が有効です（下記）
+
 ## 実装メモ・既知の制限
 
+- **既定ホットキー `Ctrl+Space`**: 一部の日本語 IME では `Ctrl+Space` が IME のオン/オフ切替に割り当てられていることがあります。競合する場合は設定画面から別のキーに変更してください
 - **IME 変換中のホットキー無視**: 他プロセスの未確定文字列を直接取得する公開 API が無いため、IME 候補ウィンドウ等の表示状態からのベストエフォート判定です
 - **エラー通知**: 仕様書 8.5 に従い、Windows 標準バルーンではなくアプリ固有のトースト風ポップアップで通知します（仕様書 12 のバルーン記載より 8.5 の UI 仕様を優先）
 - **VAD フィルタ**: フレーム単位のエネルギー判定による無音区間除去です
+- **exe サイズ**: 自己完結（.NET ランタイム＋WPF 同梱）のため単一ファイル圧縮を有効化しています。フレームワーク依存ビルドにすれば大幅に小さくできますが、別途 .NET Desktop Runtime のインストールが必要になるため、仕様（インストーラー不要）を優先して自己完結にしています
 - **GPU 対応**: 現状 CPU のみ。GPU (CUDA) 対応は `Whisper.net.Runtime.Cuda` の追加同梱で対応可能です
 
 ## 使用ライブラリ・ライセンス

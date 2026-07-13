@@ -39,8 +39,12 @@ public sealed class TranscriptionService : IDisposable
         var hint = _dictionary.BuildPromptHint();
         if (hint.Length > 0) prompt.Append($"次の語が含まれることがあります: {hint}。");
 
+        // CPU 実行時の速度改善のため、利用可能なコアをできるだけ使う（最低 1）
+        int threads = Math.Max(1, Environment.ProcessorCount - 1);
+
         await using var processor = factory.CreateBuilder()
             .WithLanguage("ja")
+            .WithThreads(threads)
             .WithPrompt(prompt.ToString())
             .Build();
 

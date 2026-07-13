@@ -1,9 +1,10 @@
-# Windows 向け単一 exe のビルド検証とアーティファクト生成
+# Windows 向け単一 exe のビルド検証・アーティファクト生成、およびタグ push 時のリリース
 name: build
 
 on:
   push:
     branches: ["**"]
+    tags: ["v*"]
   pull_request:
   workflow_dispatch:
 
@@ -36,3 +37,47 @@ jobs:
         with:
           name: VoiceDock-win-x64
           path: publish/VoiceDock.exe
+
+  # v* タグの push 時に単一 exe をビルドして GitHub Release を作成・添付する
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: windows-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: .NET SDK のセットアップ
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+
+      - name: 単一 exe の発行
+        run: >
+          dotnet publish src/VoiceDock/VoiceDock.csproj
+          -c Release
+          -r win-x64
+          --self-contained true
+          -p:PublishSingleFile=true
+          -p:IncludeNativeLibrariesForSelfExtract=true
+          -o publish
+
+      - name: リリース用に exe をバージョン名でリネーム
+        shell: pwsh
+        run: Copy-Item publish/VoiceDock.exe "publish/VoiceDock-${{ github.ref_name }}-win-x64.exe"
+
+      - name: GitHub Release の作成
+        uses: softprops/action-gh-release@v2
+        with:
+          name: VoiceDock ${{ github.ref_name }}
+          generate_release_notes: true
+          files: publish/VoiceDock-${{ github.ref_name }}-win-x64.exe
+          body: |
+            Whisper を用いたローカル完結の音声入力ツール VoiceDock の ${{ github.ref_name }} リリースです。
+
+            ## 導入
+            - `VoiceDock-${{ github.ref_name }}-win-x64.exe` をダウンロードし、任意の場所に置いて実行してください（署名なし・インストーラーなし）。
+            - 対応 OS: Windows 10 / 11。初回起動時に Whisper モデル（初期値 medium）を自動ダウンロードします（要ネットワーク）。
+            - 本ビルドは CPU ランタイム同梱です（GPU/CUDA 非同梱）。
+
+            詳細は README を参照してください。

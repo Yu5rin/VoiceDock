@@ -12,9 +12,9 @@
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <!-- Linux 等の非 Windows 環境でも win 向けビルドを可能にする -->
     <EnableWindowsTargeting>true</EnableWindowsTargeting>
-    <Version>0.3.0</Version>
+    <Version>0.4.0</Version>
     <Product>VoiceDock</Product>
-    <Description>Whisper を用いたローカル完結の音声入力ツール</Description>
+    <Description>Web Speech API を用いた音声入力ツール</Description>
   </PropertyGroup>
 
   <ItemGroup>
@@ -23,10 +23,10 @@
     <Using Remove="System.Drawing" />
   </ItemGroup>
 
-  <ItemGroup>
-    <PackageReference Include="NAudio" Version="2.2.1" />
-    <PackageReference Include="Whisper.net" Version="1.7.4" />
-    <PackageReference Include="Whisper.net.Runtime" Version="1.7.4" />
-  </ItemGroup>
+  <!--
+    認識エンジンは Web Speech API（ブラウザ側）に移行したため、
+    ローカル音声認識ライブラリ（Whisper.net）およびマイク録音ライブラリ（NAudio）は不要。
+    録音・認識はブラウザが行い、本体は WebSocket で結果を受け取って SendInput で流し込む。
+  -->
 
 </Project>

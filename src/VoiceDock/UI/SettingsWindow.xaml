@@ -23,18 +23,10 @@
 
             <Separator Margin="0,16" Background="{StaticResource BorderBrush}"/>
 
-            <!-- モデルサイズ -->
-            <TextBlock Text="モデルサイズ" FontWeight="Bold"/>
-            <TextBlock Text="大きいほど高精度ですが、変換に時間がかかります。変更後の初回利用時に自動ダウンロードされます"
+            <!-- 認識エンジンの説明 -->
+            <TextBlock Text="音声認識" FontWeight="Bold"/>
+            <TextBlock Text="認識はブラウザ(Edge)の Web Speech API で行います（日本語）。使用マイクは Windows の既定デバイスが使われます。音声はクラウドで認識されます。"
                        Style="{StaticResource SubText}" Margin="0,2,0,6"/>
-            <ComboBox x:Name="ModelCombo" SelectionChanged="ModelCombo_SelectionChanged"/>
-
-            <Separator Margin="0,16" Background="{StaticResource BorderBrush}"/>
-
-            <!-- マイクデバイス -->
-            <TextBlock Text="マイクデバイス" FontWeight="Bold"/>
-            <TextBlock Text="使用するマイクを選択します" Style="{StaticResource SubText}" Margin="0,2,0,6"/>
-            <ComboBox x:Name="MicCombo" SelectionChanged="MicCombo_SelectionChanged"/>
 
             <Separator Margin="0,16" Background="{StaticResource BorderBrush}"/>
 

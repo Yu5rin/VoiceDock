@@ -1,42 +1,43 @@
 using System.Windows;
+using System.Windows.Threading;
 using VoiceDock.UI;
 
 namespace VoiceDock.Services;
 
 /// <summary>
-/// 録音〜文字起こし〜直接入力のオーケストレーション。
-/// ホットキーのトグル（開始/停止）、30 秒無音の自動停止、
-/// 状態に応じたトレイアイコン・オーバーレイの制御を行う。
+/// 認識の開始/停止と、認識結果の入力欄への流し込みを統括する。
+/// 実際の録音・認識はブラウザ(Web Speech API)が行い、本体は
+/// 確定テキストを受け取って辞書置換のうえ SendInput で前面アプリへ入力する。
+/// ホットキーのトグル、30 秒無音の自動停止、トレイ・オーバーレイ制御を担う。
 /// </summary>
 public sealed class RecordingController : IDisposable
 {
-    private enum State { Idle, Recording, Processing }
+    private static readonly TimeSpan SilenceAutoStop = TimeSpan.FromSeconds(30);
 
     private readonly LogService _log;
-    private readonly SettingsService _settings;
-    private readonly TranscriptionService _transcription;
-    private readonly ModelDownloader _modelDownloader;
+    private readonly DictionaryService _dictionary;
+    private readonly SpeechBridgeServer _bridge;
     private readonly TrayIconController _tray;
     private readonly OverlayWindow _overlay;
-    private readonly AudioRecorder _recorder = new();
+    private readonly Dispatcher _dispatcher;
 
     private readonly object _sync = new();
-    private State _state = State.Idle;
+    private bool _listening;
+    private DispatcherTimer? _silenceTimer;
 
-    public RecordingController(LogService log, SettingsService settings,
-        TranscriptionService transcription, ModelDownloader modelDownloader,
-        TrayIconController tray, OverlayWindow overlay)
+    public RecordingController(LogService log, DictionaryService dictionary,
+        SpeechBridgeServer bridge, TrayIconController tray, OverlayWindow overlay)
     {
         _log = log;
-        _settings = settings;
-        _transcription = transcription;
-        _modelDownloader = modelDownloader;
+        _dictionary = dictionary;
+        _bridge = bridge;
         _tray = tray;
         _overlay = overlay;
+        _dispatcher = Application.Current.Dispatcher;
 
-        _recorder.LevelChanged += _overlay.UpdateLevel;
-        _recorder.SilenceTimeout += OnSilenceTimeout;
-        _recorder.RecordingFailed += OnRecordingFailed;
+        _bridge.FinalText += OnFinalText;
+        _bridge.LevelChanged += _overlay.UpdateLevel;
+        _bridge.RecognitionError += OnRecognitionError;
     }
 
     /// <summary>ホットキー押下時の入口。UI スレッドで呼ぶこと。</summary>
@@ -51,178 +52,118 @@ public sealed class RecordingController : IDisposable
 
         lock (_sync)
         {
-            switch (_state)
-            {
-                case State.Idle:
-                    StartRecording();
-                    break;
-                case State.Recording:
-                    _ = StopAndTranscribeAsync();
-                    break;
-                case State.Processing:
-                    _log.Info("文字起こし処理中のためホットキーを無視しました");
-                    break;
-            }
+            if (_listening) StopListening("ホットキー");
+            else StartListening();
         }
     }
 
-    private void StartRecording()
+    private void StartListening()
     {
-        try
+        if (!_bridge.IsConnected)
         {
-            int deviceIndex = AudioRecorder.ResolveDeviceIndex(_settings.Current.MicDeviceName);
-            _recorder.Start(deviceIndex);
-            _state = State.Recording;
-            _tray.SetState(TrayState.Recording);
-            _overlay.ShowOverlay();
-            _log.Info("録音を開始しました");
-
-            // モデル未取得ならバックグラウンドで取得しておく
-            if (!ModelDownloader.IsModelReady(_settings.Current.ModelSize))
-                _ = EnsureModelWithNotificationAsync(_settings.Current.ModelSize);
+            _log.Warn("認識ブラウザが未接続のため録音を開始できません");
+            ToastWindow.Show("認識エンジンの準備がまだ完了していません。数秒待って再度お試しください。", ToastKind.Warning);
+            return;
         }
-        catch (Exception ex)
-        {
-            _state = State.Idle;
-            _log.Error($"録音を開始できませんでした: {ex.Message}");
-            _tray.SetState(TrayState.Error);
-            ToastWindow.Show($"録音を開始できませんでした: {ex.Message}", ToastKind.Error);
-            ResetTrayAfterDelay();
-        }
+
+        _listening = true;
+        _ = _bridge.StartRecognitionAsync();
+        _tray.SetState(TrayState.Recording);
+        _overlay.ShowOverlay();
+        ResetSilenceTimer();
+        _log.Info("録音を開始しました");
     }
 
-    /// <summary>30 秒無音時の自動停止（NAudio コールバックスレッドから呼ばれる）。</summary>
-    private void OnSilenceTimeout()
+    private void StopListening(string reason)
     {
-        Application.Current?.Dispatcher.BeginInvoke(() =>
-        {
-            lock (_sync)
-            {
-                if (_state != State.Recording) return;
-                _log.Info("30 秒間無音が続いたため録音を自動停止します");
-                _ = StopAndTranscribeAsync();
-            }
-        });
-    }
-
-    private void OnRecordingFailed(Exception ex)
-    {
-        Application.Current?.Dispatcher.BeginInvoke(() =>
-        {
-            lock (_sync)
-            {
-                if (_state != State.Recording) return;
-                _state = State.Idle;
-            }
-            _recorder.Stop();
-            _overlay.HideOverlay();
-            _log.Error($"録音中にエラーが発生しました: {ex.Message}");
-            _tray.SetState(TrayState.Error);
-            ToastWindow.Show($"録音中にエラーが発生しました: {ex.Message}", ToastKind.Error);
-            ResetTrayAfterDelay();
-        });
-    }
-
-    private async Task StopAndTranscribeAsync()
-    {
-        float[] samples = _recorder.Stop();
-        _state = State.Processing;
+        if (!_listening) return;
+        _listening = false;
+        _ = _bridge.StopRecognitionAsync();
+        StopSilenceTimer();
         _overlay.HideOverlay();
-        _tray.SetState(TrayState.Idle, "VoiceDock - 文字起こし中");
-        _log.Info($"録音を停止しました ({samples.Length / 16000.0:F1} 秒)");
+        _tray.SetState(TrayState.Idle);
+        _log.Info($"録音を停止しました ({reason})");
+    }
 
-        try
+    private void OnFinalText(string text)
+    {
+        text = text.Trim();
+        if (text.Length == 0) return;
+
+        _dispatcher.BeginInvoke(() =>
         {
-            // VAD フィルタ（無音区間除去）
-            var voiced = VadFilter.Trim(samples, 16000);
-            if (voiced.Length == 0)
+            lock (_sync)
             {
-                _log.Info("音声が検出されなかったため文字起こしをスキップしました");
-                return;
+                if (!_listening) return;
+                ResetSilenceTimer();
             }
 
-            var modelPath = await EnsureModelWithNotificationAsync(_settings.Current.ModelSize);
-
-            var text = await Task.Run(() => _transcription.TranscribeAsync(voiced, modelPath));
-            if (text.Length == 0)
-            {
-                _log.Info("認識結果が空でした");
-                return;
-            }
-
+            // 辞書の「誤認識語→正しい語」置換を適用
+            text = _dictionary.ApplyReplacements(text);
             _log.Recognition(text);
 
             // フォーカス中のテキスト入力欄へ直接キー入力。
             // 入力欄が無い等で失敗した場合は何もしない（エラー通知なし）
             if (!TextInjector.SendText(text))
                 _log.Info("テキスト入力欄が見つからないため流し込みをスキップしました");
-        }
-        catch (Exception ex)
-        {
-            _log.Error($"文字起こしに失敗しました: {ex.Message}");
-            _tray.SetState(TrayState.Error);
-            ToastWindow.Show($"文字起こしに失敗しました: {ex.Message}", ToastKind.Error);
-            ResetTrayAfterDelay();
-        }
-        finally
-        {
-            lock (_sync) _state = State.Idle;
-            if (_tray != null) _tray.SetState(TrayState.Idle);
-        }
+        });
     }
 
-    /// <summary>初回起動時などのモデル自動ダウンロード（トースト・トレイ表示付き）。</summary>
-    public async Task<string> EnsureModelWithNotificationAsync(string modelSize)
+    private void OnRecognitionError(string detail)
     {
-        if (ModelDownloader.IsModelReady(modelSize))
-            return ModelDownloader.GetModelPath(modelSize);
-
-        ToastWindow.Show($"Whisper モデル ({modelSize}) をダウンロードしています。完了までしばらくお待ちください。");
-        int lastPercent = -1;
-        var progress = new Progress<double>(p =>
+        _dispatcher.BeginInvoke(() =>
         {
-            int percent = (int)(p * 100);
-            if (percent / 10 != lastPercent / 10)
+            switch (detail)
             {
-                lastPercent = percent;
-                _tray.SetState(TrayState.Idle, $"VoiceDock - モデルDL中 {percent}%");
+                case "not-allowed":
+                case "service-not-allowed":
+                    _log.Error($"マイクの使用が許可されていません ({detail})");
+                    _tray.SetState(TrayState.Error);
+                    ToastWindow.Show("マイクの使用が許可されていません。ブラウザのマイク権限を確認してください。", ToastKind.Error);
+                    break;
+                case "speech-unsupported":
+                    _log.Error("このブラウザは Web Speech API に対応していません");
+                    _tray.SetState(TrayState.Error);
+                    ToastWindow.Show("認識ブラウザが Web Speech API に対応していません。Edge/Chrome をご利用ください。", ToastKind.Error);
+                    break;
+                case "network":
+                    _log.Warn("認識でネットワークエラーが発生しました");
+                    ToastWindow.Show("音声認識のネットワークエラーが発生しました。接続を確認してください。", ToastKind.Warning);
+                    break;
+                default:
+                    _log.Warn($"認識エラー: {detail}");
+                    break;
             }
         });
-
-        try
-        {
-            var path = await _modelDownloader.EnsureModelAsync(modelSize, progress);
-            ToastWindow.Show($"モデル ({modelSize}) のダウンロードが完了しました。");
-            return path;
-        }
-        catch (Exception ex)
-        {
-            _log.Error($"モデルのダウンロードに失敗しました: {ex.Message}");
-            ToastWindow.Show($"モデルのダウンロードに失敗しました: {ex.Message}", ToastKind.Error);
-            throw;
-        }
-        finally
-        {
-            _tray.SetState(TrayState.Idle);
-        }
     }
 
-    private void ResetTrayAfterDelay()
+    private void ResetSilenceTimer()
     {
-        _ = Task.Delay(TimeSpan.FromSeconds(5)).ContinueWith(_ =>
+        _dispatcher.BeginInvoke(() =>
         {
-            lock (_sync)
+            StopSilenceTimer();
+            _silenceTimer = new DispatcherTimer { Interval = SilenceAutoStop };
+            _silenceTimer.Tick += (_, _) =>
             {
-                if (_state == State.Idle)
-                    _tray.SetState(TrayState.Idle);
-                else if (_state == State.Recording)
-                    _tray.SetState(TrayState.Recording);
-            }
+                lock (_sync)
+                {
+                    if (!_listening) return;
+                    _log.Info("30 秒間無音が続いたため録音を自動停止します");
+                    StopListening("無音自動停止");
+                }
+            };
+            _silenceTimer.Start();
         });
+    }
+
+    private void StopSilenceTimer()
+    {
+        _silenceTimer?.Stop();
+        _silenceTimer = null;
     }
 
     public void Dispose()
     {
-        _recorder.Dispose();
+        StopSilenceTimer();
     }
 }

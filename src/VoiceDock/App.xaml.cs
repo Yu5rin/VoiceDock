@@ -14,8 +14,8 @@ public partial class App : Application
     private LogService? _log;
     private SettingsService? _settings;
     private DictionaryService? _dictionary;
-    private ModelDownloader? _modelDownloader;
-    private TranscriptionService? _transcription;
+    private SpeechBridgeServer? _bridge;
+    private BrowserLauncher? _browser;
     private HotkeyManager? _hotkey;
     private TrayIconController? _tray;
     private OverlayWindow? _overlay;
@@ -52,9 +52,6 @@ public partial class App : Application
         _dictionary = new DictionaryService(_log);
         _dictionary.Load();
 
-        _modelDownloader = new ModelDownloader(_log);
-        _transcription = new TranscriptionService(_log, _dictionary);
-
         _tray = new TrayIconController();
         _tray.SettingsRequested += ShowSettings;
         _tray.DictionaryRequested += ShowDictionary;
@@ -62,7 +59,28 @@ public partial class App : Application
         _tray.ExitRequested += ExitApplication;
 
         _overlay = new OverlayWindow();
-        _controller = new RecordingController(_log, _settings, _transcription, _modelDownloader, _tray, _overlay);
+
+        // 認識ブリッジ（ローカルサーバー）を起動し、認識用ブラウザ(Edge)を裏で立ち上げる
+        _bridge = new SpeechBridgeServer(_log);
+        _bridge.Ready += () => _log.Info("認識エンジンの準備が完了しました");
+        try
+        {
+            _bridge.Start();
+            _browser = new BrowserLauncher(_log);
+            if (!_browser.Launch(_bridge.PageUrl))
+            {
+                _tray.SetState(TrayState.Error);
+                ToastWindow.Show("認識用ブラウザ (Edge/Chrome) が見つからず、音声認識を利用できません。", ToastKind.Error);
+            }
+        }
+        catch (Exception ex)
+        {
+            _log.Error($"認識ブリッジの初期化に失敗しました: {ex.Message}");
+            _tray.SetState(TrayState.Error);
+            ToastWindow.Show($"認識エンジンの初期化に失敗しました: {ex.Message}", ToastKind.Error);
+        }
+
+        _controller = new RecordingController(_log, _dictionary, _bridge, _tray, _overlay);
 
         // グローバルホットキー登録（衝突時はトーストで警告）
         _hotkey = new HotkeyManager();
@@ -88,13 +106,6 @@ public partial class App : Application
         catch (Exception ex)
         {
             _log.Warn($"スタートアップ登録の同期に失敗しました: {ex.Message}");
-        }
-
-        // 初回起動時のモデル自動ダウンロード
-        if (!ModelDownloader.IsModelReady(_settings.Current.ModelSize))
-        {
-            _ = _controller.EnsureModelWithNotificationAsync(_settings.Current.ModelSize)
-                .ContinueWith(_ => { /* 失敗時は通知済み */ });
         }
     }
 
@@ -164,7 +175,8 @@ public partial class App : Application
         _controller?.Dispose();
         _hotkey?.Dispose();
         _tray?.Dispose();
-        _transcription?.Dispose();
+        _browser?.Dispose();
+        _bridge?.Dispose();
         _instanceGuard?.Dispose();
         base.OnExit(e);
     }

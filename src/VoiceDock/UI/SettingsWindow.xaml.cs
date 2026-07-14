@@ -11,8 +11,6 @@ namespace VoiceDock.UI;
 /// </summary>
 public partial class SettingsWindow : Window
 {
-    private const string DefaultDeviceLabel = "既定のデバイス";
-
     private readonly SettingsService _settings;
     private readonly Func<HotkeySpec, bool> _applyHotkey;
     private readonly Action _openDictionary;
@@ -26,20 +24,6 @@ public partial class SettingsWindow : Window
         _openDictionary = openDictionary;
 
         HotkeyBox.Text = settings.Current.Hotkey;
-
-        foreach (var size in ModelDownloader.ModelSizes)
-            ModelCombo.Items.Add(size);
-        ModelCombo.SelectedItem = settings.Current.ModelSize;
-        if (ModelCombo.SelectedItem == null) ModelCombo.SelectedItem = "small";
-
-        MicCombo.Items.Add(DefaultDeviceLabel);
-        foreach (var (_, name) in AudioRecorder.GetDevices())
-            MicCombo.Items.Add(name);
-        MicCombo.SelectedItem = string.IsNullOrWhiteSpace(settings.Current.MicDeviceName)
-            ? DefaultDeviceLabel
-            : settings.Current.MicDeviceName;
-        if (MicCombo.SelectedItem == null) MicCombo.SelectedIndex = 0;
-
         StartupCheck.IsChecked = settings.Current.StartupEnabled;
 
         _initializing = false;
@@ -79,18 +63,6 @@ public partial class SettingsWindow : Window
     {
         HotkeyWarning.Text = message;
         HotkeyWarning.Visibility = Visibility.Visible;
-    }
-
-    private void ModelCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
-    {
-        if (_initializing || ModelCombo.SelectedItem is not string size) return;
-        _settings.Update(s => s.ModelSize = size);
-    }
-
-    private void MicCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
-    {
-        if (_initializing || MicCombo.SelectedItem is not string name) return;
-        _settings.Update(s => s.MicDeviceName = name == DefaultDeviceLabel ? null : name);
     }
 
     private void StartupCheck_Changed(object sender, RoutedEventArgs e)

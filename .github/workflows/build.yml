@@ -95,11 +95,11 @@ jobs:
           generate_release_notes: true
           files: publish/VoiceDock-${{ steps.ver.outputs.tag }}-win-x64.exe
           body: |
-            Whisper を用いたローカル完結の音声入力ツール VoiceDock の ${{ steps.ver.outputs.tag }} リリースです。
+            Web Speech API を用いた音声入力ツール VoiceDock の ${{ steps.ver.outputs.tag }} リリースです。
 
             ## 導入
             - `VoiceDock-${{ steps.ver.outputs.tag }}-win-x64.exe` をダウンロードし、任意の場所に置いて実行してください（署名なし・インストーラーなし）。
-            - 対応 OS: Windows 10 / 11。初回起動時に Whisper モデル（初期値 medium）を自動ダウンロードします（要ネットワーク）。
-            - 本ビルドは CPU ランタイム同梱です（GPU/CUDA 非同梱）。
+            - 対応 OS: Windows 10 / 11。標準搭載の Microsoft Edge（無ければ Chrome）とインターネット接続が必要です。
+            - 認識はブラウザの Web Speech API（クラウド認識）で行います。音声はクラウドに送信されます。
 
             詳細は README を参照してください。

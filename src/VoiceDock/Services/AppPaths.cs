@@ -12,13 +12,14 @@ public static class AppPaths
 
     public static string SettingsFile => Path.Combine(Root, "settings.json");
     public static string DictionaryFile => Path.Combine(Root, "dictionary.json");
-    public static string ModelsDir => Path.Combine(Root, "models");
     public static string LogsDir => Path.Combine(Root, "logs");
+
+    /// <summary>認識用ブラウザ(Edge)の専用プロファイル。マイク許可等を保持する。</summary>
+    public static string BrowserProfileDir => Path.Combine(Root, "browser-profile");
 
     public static void EnsureDirectories()
     {
         Directory.CreateDirectory(Root);
-        Directory.CreateDirectory(ModelsDir);
         Directory.CreateDirectory(LogsDir);
     }
 }

@@ -1,0 +1,353 @@
+using System.Net;
+using System.Net.Sockets;
+using System.Net.WebSockets;
+using System.Text;
+using System.Text.Json;
+
+namespace VoiceDock.Services;
+
+/// <summary>
+/// Web Speech API ブリッジのローカルサーバー。
+/// 127.0.0.1 上で認識用 HTML を配信し、WebSocket でブラウザ(Edge)と双方向通信する。
+/// ブラウザ側が Web Speech API で音声認識を行い、確定/暫定テキストと音量レベルを送ってくる。
+/// 本体からは「開始」「停止」コマンドを送る。
+/// </summary>
+public sealed class SpeechBridgeServer : IDisposable
+{
+    private readonly LogService _log;
+    private readonly string _token = Guid.NewGuid().ToString("N");
+    private readonly SemaphoreSlim _sendLock = new(1, 1);
+
+    private HttpListener? _listener;
+    private WebSocket? _socket;
+    private CancellationTokenSource? _cts;
+    private int _port;
+
+    /// <summary>ブラウザに読み込ませる認識ページの URL。</summary>
+    public string PageUrl => $"http://127.0.0.1:{_port}/";
+
+    /// <summary>ブラウザ(WebSocket)が接続済みかどうか。</summary>
+    public bool IsConnected => _socket?.State == WebSocketState.Open;
+
+    /// <summary>確定した認識テキスト。</summary>
+    public event Action<string>? FinalText;
+
+    /// <summary>暫定（認識途中）の認識テキスト。</summary>
+    public event Action<string>? PartialText;
+
+    /// <summary>音量レベル (RMS 0..1)。オーバーレイの波形用。</summary>
+    public event Action<float>? LevelChanged;
+
+    /// <summary>ブラウザが接続し、認識準備が整ったとき。</summary>
+    public event Action? Ready;
+
+    /// <summary>認識エラー（Web Speech API の error など）。</summary>
+    public event Action<string>? RecognitionError;
+
+    public SpeechBridgeServer(LogService log)
+    {
+        _log = log;
+    }
+
+    public void Start()
+    {
+        _port = FindFreePort();
+        _cts = new CancellationTokenSource();
+
+        _listener = new HttpListener();
+        // 特定 IP + ポートなら管理者権限・URL 予約なしでバインドできる
+        _listener.Prefixes.Add($"http://127.0.0.1:{_port}/");
+        _listener.Start();
+        _log.Info($"認識ブリッジを起動しました: {PageUrl}");
+
+        _ = AcceptLoopAsync(_cts.Token);
+    }
+
+    /// <summary>ブラウザに認識開始を指示する。</summary>
+    public Task StartRecognitionAsync() => SendCommandAsync("start");
+
+    /// <summary>ブラウザに認識停止を指示する。</summary>
+    public Task StopRecognitionAsync() => SendCommandAsync("stop");
+
+    private async Task AcceptLoopAsync(CancellationToken ct)
+    {
+        while (!ct.IsCancellationRequested && _listener is { IsListening: true })
+        {
+            HttpListenerContext ctx;
+            try
+            {
+                ctx = await _listener.GetContextAsync();
+            }
+            catch (Exception) when (ct.IsCancellationRequested)
+            {
+                return;
+            }
+            catch (Exception ex)
+            {
+                _log.Error($"認識ブリッジの受付でエラー: {ex.Message}");
+                continue;
+            }
+
+            _ = HandleRequestAsync(ctx, ct);
+        }
+    }
+
+    private async Task HandleRequestAsync(HttpListenerContext ctx, CancellationToken ct)
+    {
+        try
+        {
+            if (ctx.Request.Url?.AbsolutePath == "/ws" && ctx.Request.IsWebSocketRequest)
+            {
+                if (ctx.Request.QueryString["token"] != _token)
+                {
+                    ctx.Response.StatusCode = 403;
+                    ctx.Response.Close();
+                    return;
+                }
+                var wsCtx = await ctx.AcceptWebSocketAsync(subProtocol: null);
+                _socket = wsCtx.WebSocket;
+                _log.Info("ブラウザが認識ブリッジに接続しました");
+                await ReceiveLoopAsync(_socket, ct);
+            }
+            else
+            {
+                var html = Encoding.UTF8.GetBytes(BuildPageHtml());
+                ctx.Response.ContentType = "text/html; charset=utf-8";
+                ctx.Response.ContentLength64 = html.Length;
+                await ctx.Response.OutputStream.WriteAsync(html, ct);
+                ctx.Response.Close();
+            }
+        }
+        catch (Exception ex)
+        {
+            _log.Error($"認識ブリッジのリクエスト処理でエラー: {ex.Message}");
+            try { ctx.Response.Abort(); } catch { /* 無視 */ }
+        }
+    }
+
+    private async Task ReceiveLoopAsync(WebSocket socket, CancellationToken ct)
+    {
+        var buffer = new byte[8192];
+        var sb = new StringBuilder();
+        try
+        {
+            while (socket.State == WebSocketState.Open && !ct.IsCancellationRequested)
+            {
+                sb.Clear();
+                WebSocketReceiveResult result;
+                do
+                {
+                    result = await socket.ReceiveAsync(new ArraySegment<byte>(buffer), ct);
+                    if (result.MessageType == WebSocketMessageType.Close)
+                    {
+                        await socket.CloseAsync(WebSocketCloseStatus.NormalClosure, "", CancellationToken.None);
+                        return;
+                    }
+                    sb.Append(Encoding.UTF8.GetString(buffer, 0, result.Count));
+                } while (!result.EndOfMessage);
+
+                HandleMessage(sb.ToString());
+            }
+        }
+        catch (Exception) when (ct.IsCancellationRequested)
+        {
+            // 終了時は無視
+        }
+        catch (Exception ex)
+        {
+            _log.Warn($"認識ブリッジの受信が切断されました: {ex.Message}");
+        }
+    }
+
+    private void HandleMessage(string json)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(json);
+            var root = doc.RootElement;
+            var type = root.TryGetProperty("type", out var t) ? t.GetString() : null;
+            switch (type)
+            {
+                case "final":
+                    if (root.TryGetProperty("text", out var ft))
+                        FinalText?.Invoke(ft.GetString() ?? "");
+                    break;
+                case "partial":
+                    if (root.TryGetProperty("text", out var pt))
+                        PartialText?.Invoke(pt.GetString() ?? "");
+                    break;
+                case "level":
+                    if (root.TryGetProperty("value", out var lv) && lv.TryGetDouble(out var d))
+                        LevelChanged?.Invoke((float)d);
+                    break;
+                case "status":
+                    var state = root.TryGetProperty("state", out var st) ? st.GetString() : "";
+                    if (state == "ready") Ready?.Invoke();
+                    break;
+                case "error":
+                    var detail = root.TryGetProperty("detail", out var de) ? de.GetString() : "";
+                    RecognitionError?.Invoke(detail ?? "");
+                    break;
+            }
+        }
+        catch (Exception ex)
+        {
+            _log.Warn($"認識ブリッジのメッセージ解析に失敗: {ex.Message}");
+        }
+    }
+
+    private async Task SendCommandAsync(string cmd)
+    {
+        var socket = _socket;
+        if (socket is not { State: WebSocketState.Open })
+        {
+            _log.Warn($"ブラウザ未接続のため「{cmd}」を送信できませんでした");
+            return;
+        }
+
+        var payload = Encoding.UTF8.GetBytes($"{{\"cmd\":\"{cmd}\"}}");
+        await _sendLock.WaitAsync();
+        try
+        {
+            await socket.SendAsync(new ArraySegment<byte>(payload),
+                WebSocketMessageType.Text, endOfMessage: true, CancellationToken.None);
+        }
+        catch (Exception ex)
+        {
+            _log.Warn($"認識ブリッジへの送信に失敗: {ex.Message}");
+        }
+        finally
+        {
+            _sendLock.Release();
+        }
+    }
+
+    private static int FindFreePort()
+    {
+        // ポート 0 で一時的にバインドして OS に空きポートを割り当ててもらう
+        var tcp = new TcpListener(IPAddress.Loopback, 0);
+        tcp.Start();
+        int port = ((IPEndPoint)tcp.LocalEndpoint).Port;
+        tcp.Stop();
+        return port;
+    }
+
+    private string BuildPageHtml()
+    {
+        // 認識ページ。ws の URL とトークンを埋め込む。
+        return HtmlTemplate
+            .Replace("__PORT__", _port.ToString())
+            .Replace("__TOKEN__", _token);
+    }
+
+    public void Dispose()
+    {
+        try { _cts?.Cancel(); } catch { /* 無視 */ }
+        try { _socket?.Abort(); } catch { /* 無視 */ }
+        try { _listener?.Stop(); } catch { /* 無視 */ }
+        try { _listener?.Close(); } catch { /* 無視 */ }
+        _cts?.Dispose();
+    }
+
+    // ブラウザ側の認識ロジック。Web Speech API (webkitSpeechRecognition) を日本語・連続認識で動かし、
+    // 確定/暫定テキストと音量レベルを WebSocket で本体へ送る。
+    private const string HtmlTemplate = """
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<title>VoiceDock Recognizer</title>
+<style>
+  html,body{margin:0;background:#1b1b1f;color:#e8e8ea;font-family:'Yu Gothic UI',sans-serif;
+    display:flex;align-items:center;justify-content:center;height:100vh;font-size:12px;}
+</style>
+</head>
+<body>
+<div id="s">VoiceDock recognizer</div>
+<script>
+  const WS_URL = "ws://127.0.0.1:__PORT__/ws?token=__TOKEN__";
+  let ws, recog, shouldListen = false;
+  let audioCtx, analyser, micStream, levelTimer;
+
+  function send(o){ try{ if(ws && ws.readyState===1) ws.send(JSON.stringify(o)); }catch(_){} }
+
+  function connect(){
+    ws = new WebSocket(WS_URL);
+    ws.onopen = () => send({type:'status', state:'ready'});
+    ws.onmessage = (e) => {
+      let m; try{ m = JSON.parse(e.data); }catch(_){ return; }
+      if(m.cmd === 'start') startRecog();
+      else if(m.cmd === 'stop') stopRecog();
+    };
+    ws.onclose = () => setTimeout(connect, 1000);
+    ws.onerror = () => { try{ ws.close(); }catch(_){} };
+  }
+
+  function setupRecog(){
+    const SR = window.webkitSpeechRecognition || window.SpeechRecognition;
+    if(!SR){ send({type:'error', detail:'speech-unsupported'}); return null; }
+    const r = new SR();
+    r.lang = 'ja-JP';
+    r.continuous = true;
+    r.interimResults = true;
+    r.onresult = (ev) => {
+      for(let i = ev.resultIndex; i < ev.results.length; i++){
+        const res = ev.results[i];
+        const text = res[0].transcript;
+        if(res.isFinal) send({type:'final', text:text});
+        else send({type:'partial', text:text});
+      }
+    };
+    r.onerror = (ev) => { if(ev.error !== 'no-speech') send({type:'error', detail:ev.error}); };
+    // 連続認識は無音などで自動終了することがあるため、継続希望なら再開する
+    r.onend = () => { if(shouldListen){ try{ r.start(); }catch(_){} } };
+    return r;
+  }
+
+  function startRecog(){
+    shouldListen = true;
+    if(!recog) recog = setupRecog();
+    if(!recog) return;
+    try{ recog.start(); }catch(_){ /* 既に開始済みなら無視 */ }
+    send({type:'status', state:'listening'});
+    startLevel();
+  }
+
+  function stopRecog(){
+    shouldListen = false;
+    try{ recog && recog.stop(); }catch(_){}
+    stopLevel();
+    send({type:'status', state:'stopped'});
+  }
+
+  async function startLevel(){
+    if(micStream) return;
+    try{
+      micStream = await navigator.mediaDevices.getUserMedia({audio:true});
+      audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      const src = audioCtx.createMediaStreamSource(micStream);
+      analyser = audioCtx.createAnalyser();
+      analyser.fftSize = 512;
+      src.connect(analyser);
+      const buf = new Uint8Array(analyser.frequencyBinCount);
+      levelTimer = setInterval(() => {
+        analyser.getByteTimeDomainData(buf);
+        let sum = 0;
+        for(const v of buf){ const x = (v - 128) / 128; sum += x * x; }
+        send({type:'level', value: Math.sqrt(sum / buf.length)});
+      }, 60);
+    }catch(_){ /* レベル取得失敗は致命的ではない */ }
+  }
+
+  function stopLevel(){
+    if(levelTimer){ clearInterval(levelTimer); levelTimer = null; }
+    if(micStream){ micStream.getTracks().forEach(t => t.stop()); micStream = null; }
+    if(audioCtx){ try{ audioCtx.close(); }catch(_){} audioCtx = null; }
+  }
+
+  connect();
+</script>
+</body>
+</html>
+""";
+}

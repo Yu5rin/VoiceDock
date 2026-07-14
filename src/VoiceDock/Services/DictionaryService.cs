@@ -10,8 +10,8 @@ namespace VoiceDock.Services;
 
 /// <summary>
 /// 辞書登録機能。社内用語・人名などの誤認識対策として、
-/// (1) 登録単語を Whisper の initial_prompt ヒントに渡す、
-/// (2) 認識後の文字列を「誤認識語→正しい語」で強制置換する、の 2 段構えで使う。
+/// 認識後の文字列を「誤認識語→正しい語」で強制置換する。
+/// （Web Speech API では認識前のヒント指定ができないため、後段の置換で対応する）
 /// データは %APPDATA%\VoiceDock\dictionary.json に保存し、CSV でエクスポート/インポートできる。
 /// </summary>
 public sealed class DictionaryService
@@ -75,20 +75,6 @@ public sealed class DictionaryService
         catch (Exception ex)
         {
             _log.Error($"辞書ファイルの保存に失敗しました: {ex.Message}");
-        }
-    }
-
-    /// <summary>initial_prompt に渡す登録単語ヒント（正しい語の一覧）を組み立てる。</summary>
-    public string BuildPromptHint()
-    {
-        lock (_sync)
-        {
-            var words = _entries
-                .Select(e => e.Correct)
-                .Where(w => !string.IsNullOrWhiteSpace(w))
-                .Distinct()
-                .ToList();
-            return words.Count == 0 ? "" : string.Join("、", words);
         }
     }
 

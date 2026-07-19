@@ -20,6 +20,7 @@ public partial class App : Application
     private TrayIconController? _tray;
     private OverlayWindow? _overlay;
     private RecordingController? _controller;
+    private System.Windows.Threading.DispatcherTimer? _watchdog;
 
     private SettingsWindow? _settingsWindow;
     private DictionaryWindow? _dictionaryWindow;
@@ -80,7 +81,22 @@ public partial class App : Application
             ToastWindow.Show($"認識エンジンの初期化に失敗しました: {ex.Message}", ToastKind.Error);
         }
 
-        _controller = new RecordingController(_log, _dictionary, _bridge, _tray, _overlay);
+        var processor = new TextProcessor(_settings, _dictionary);
+        _controller = new RecordingController(_log, _settings, processor, _bridge, _tray, _overlay);
+        _controller.ListeningChanged += listening => _tray!.SetListening(listening);
+        _tray.RecordToggleRequested += () => _controller!.ToggleFromMenu();
+
+        // ブラウザ監視: 認識用ブラウザが落ちていたら自動再起動する
+        _watchdog = new System.Windows.Threading.DispatcherTimer
+        {
+            Interval = TimeSpan.FromSeconds(20),
+        };
+        _watchdog.Tick += (_, _) =>
+        {
+            if (_browser is { IsRunning: false })
+                _browser.Relaunch();
+        };
+        _watchdog.Start();
 
         // グローバルホットキー登録（衝突時はトーストで警告）
         _hotkey = new HotkeyManager();
@@ -106,6 +122,13 @@ public partial class App : Application
         catch (Exception ex)
         {
             _log.Warn($"スタートアップ登録の同期に失敗しました: {ex.Message}");
+        }
+
+        // 初回起動ガイド
+        if (!_settings.Current.FirstRunDone)
+        {
+            _settings.Update(s => s.FirstRunDone = true);
+            ToastWindow.Show($"VoiceDock へようこそ。テキスト入力欄にカーソルを置き、{_settings.Current.Hotkey} を押して話すと文字が入力されます。");
         }
     }
 
@@ -172,6 +195,7 @@ public partial class App : Application
 
     protected override void OnExit(ExitEventArgs e)
     {
+        _watchdog?.Stop();
         _controller?.Dispose();
         _hotkey?.Dispose();
         _tray?.Dispose();

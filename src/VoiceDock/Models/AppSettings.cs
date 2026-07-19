@@ -1,5 +1,14 @@
 namespace VoiceDock.Models;
 
+/// <summary>テキストの入力方式。</summary>
+public enum InputMethod
+{
+    /// <summary>SendInput による直接キー入力（既定）</summary>
+    SendInput,
+    /// <summary>クリップボード経由の貼り付け (Ctrl+V)。直接入力を受け付けないアプリ向け</summary>
+    Clipboard,
+}
+
 /// <summary>
 /// アプリ設定。%APPDATA%\VoiceDock\settings.json に保存される。
 /// </summary>
@@ -10,6 +19,24 @@ public class AppSettings
 
     /// <summary>Windows 起動時の自動起動</summary>
     public bool StartupEnabled { get; set; } = true;
+
+    /// <summary>テキストの入力方式</summary>
+    public InputMethod InputMethod { get; set; } = InputMethod.SendInput;
+
+    /// <summary>音声コマンド（「改行」等の発話を操作に変換）を有効にする</summary>
+    public bool VoiceCommandsEnabled { get; set; } = true;
+
+    /// <summary>認識結果から日本語間の不要な半角スペースを除去する</summary>
+    public bool RemoveSpaces { get; set; } = true;
+
+    /// <summary>発話の区切りごとに文末へ「。」を自動挿入する</summary>
+    public bool AutoPeriod { get; set; } = false;
+
+    /// <summary>録音開始/停止時に操作音を鳴らす</summary>
+    public bool SoundFeedback { get; set; } = true;
+
+    /// <summary>初回起動ガイドを表示済みかどうか</summary>
+    public bool FirstRunDone { get; set; }
 
     public AppSettings Clone() => (AppSettings)MemberwiseClone();
 }

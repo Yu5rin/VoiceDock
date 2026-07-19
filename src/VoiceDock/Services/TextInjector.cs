@@ -25,6 +25,82 @@ public static class TextInjector
         return info.hwndFocus != IntPtr.Zero;
     }
 
+    /// <summary>
+    /// クリップボード経由でテキストを貼り付ける (Ctrl+V)。
+    /// 直接キー入力を受け付けないアプリ向けの代替方式。元のクリップボード内容は復元する。
+    /// UI (STA) スレッドから呼ぶこと。
+    /// </summary>
+    public static bool SendViaClipboard(string text)
+    {
+        if (string.IsNullOrEmpty(text)) return true;
+        if (!HasTextInputFocus()) return false;
+
+        string? backup = null;
+        bool hadText = false;
+        try
+        {
+            if (System.Windows.Clipboard.ContainsText())
+            {
+                backup = System.Windows.Clipboard.GetText();
+                hadText = true;
+            }
+            System.Windows.Clipboard.SetDataObject(text, true);
+
+            // Ctrl+V を送出
+            var inputs = new[]
+            {
+                MakeKeyInput(VK_CONTROL, keyUp: false),
+                MakeKeyInput(VK_V, keyUp: false),
+                MakeKeyInput(VK_V, keyUp: true),
+                MakeKeyInput(VK_CONTROL, keyUp: true),
+            };
+            bool ok = SendInput((uint)inputs.Length, inputs, Marshal.SizeOf<INPUT>()) == inputs.Length;
+
+            // 貼り付け処理がクリップボードを読み終えるのを待ってから復元する
+            if (hadText)
+            {
+                var restore = backup;
+                _ = Task.Delay(300).ContinueWith(_ =>
+                {
+                    try
+                    {
+                        var thread = new Thread(() =>
+                        {
+                            try { System.Windows.Clipboard.SetDataObject(restore!, true); } catch { /* 復元失敗は無視 */ }
+                        });
+                        thread.SetApartmentState(ApartmentState.STA);
+                        thread.Start();
+                    }
+                    catch { /* 復元失敗は無視 */ }
+                });
+            }
+            return ok;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private static INPUT MakeKeyInput(ushort vk, bool keyUp) => new()
+    {
+        type = INPUT_KEYBOARD,
+        U = new InputUnion
+        {
+            ki = new KEYBDINPUT
+            {
+                wVk = vk,
+                wScan = 0,
+                dwFlags = keyUp ? KEYEVENTF_KEYUP : 0,
+                time = 0,
+                dwExtraInfo = IntPtr.Zero,
+            }
+        }
+    };
+
+    private const ushort VK_CONTROL = 0x11;
+    private const ushort VK_V = 0x56;
+
     /// <summary>テキストをキー入力として送出する。成功可否を返す。</summary>
     public static bool SendText(string text)
     {

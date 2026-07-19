@@ -10,7 +10,9 @@ namespace VoiceDock.UI;
 public sealed class TrayIconController : IDisposable
 {
     private readonly NotifyIcon _notifyIcon;
+    private readonly ToolStripMenuItem _recordItem;
 
+    public event Action? RecordToggleRequested;
     public event Action? SettingsRequested;
     public event Action? DictionaryRequested;
     public event Action? LogRequested;
@@ -23,6 +25,9 @@ public sealed class TrayIconController : IDisposable
             Renderer = new DarkMenuRenderer(),
             ShowImageMargin = false,
         };
+        _recordItem = CreateItem("録音開始", () => RecordToggleRequested?.Invoke());
+        menu.Items.Add(_recordItem);
+        menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add(CreateItem("設定", () => SettingsRequested?.Invoke()));
         menu.Items.Add(CreateItem("辞書管理", () => DictionaryRequested?.Invoke()));
         menu.Items.Add(CreateItem("ログ表示", () => LogRequested?.Invoke()));
@@ -44,6 +49,12 @@ public sealed class TrayIconController : IDisposable
         var item = new ToolStripMenuItem(text);
         item.Click += (_, _) => onClick();
         return item;
+    }
+
+    /// <summary>録音状態に応じてメニューの「録音開始/停止」表記を切り替える。</summary>
+    public void SetListening(bool listening)
+    {
+        _recordItem.Text = listening ? "録音停止" : "録音開始";
     }
 
     public void SetState(TrayState state, string? tooltip = null)

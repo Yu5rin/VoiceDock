@@ -12,7 +12,7 @@
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <!-- Linux 等の非 Windows 環境でも win 向けビルドを可能にする -->
     <EnableWindowsTargeting>true</EnableWindowsTargeting>
-    <Version>0.4.0</Version>
+    <Version>0.5.0</Version>
     <Product>VoiceDock</Product>
     <Description>Web Speech API を用いた音声入力ツール</Description>
   </PropertyGroup>

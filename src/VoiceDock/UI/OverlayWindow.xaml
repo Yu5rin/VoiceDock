@@ -2,20 +2,21 @@
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         Title="VoiceDock Overlay"
-        Width="320" Height="48"
+        Width="480" Height="52"
         WindowStyle="None" AllowsTransparency="True" Background="Transparent"
         Topmost="True" ShowInTaskbar="False" ShowActivated="False"
         Focusable="False" ResizeMode="NoResize" Opacity="0">
-    <!-- 録音中のみ表示する細長いバー形状のオーバーレイ -->
-    <Border CornerRadius="24" Background="#E51B1B1F" BorderBrush="#FF3C3C44" BorderThickness="1">
-        <Grid Margin="18,0,18,0">
+    <!-- 録音中のみ表示する細長いバー形状のオーバーレイ。認識中テキストをライブ表示する -->
+    <Border CornerRadius="26" Background="#E51B1B1F" BorderBrush="#FF3C3C44" BorderThickness="1">
+        <Grid Margin="18,0,20,0">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="Auto"/>
+                <ColumnDefinition Width="132"/>
                 <ColumnDefinition Width="*"/>
             </Grid.ColumnDefinitions>
 
             <!-- マイクアイコン（録音中はアクセントカラー） -->
-            <Canvas Grid.Column="0" Width="20" Height="24" VerticalAlignment="Center" Margin="0,0,14,0">
+            <Canvas Grid.Column="0" Width="20" Height="24" VerticalAlignment="Center" Margin="0,0,12,0">
                 <Path Fill="#FFE5484D"
                       Data="M 7,2 A 3,3 0 0 1 13,2 L 13,10 A 3,3 0 0 1 7,10 Z"/>
                 <Path Stroke="#FFE5484D" StrokeThickness="1.8" StrokeStartLineCap="Round" StrokeEndLineCap="Round"
@@ -24,6 +25,14 @@
 
             <!-- 音声波形（音量に応じて動く。録音中は赤系一色） -->
             <Canvas Grid.Column="1" x:Name="WaveCanvas" Height="28" VerticalAlignment="Center" ClipToBounds="True"/>
+
+            <!-- 認識中テキストのライブ表示。長い場合は末尾（直近の発話）側を表示する -->
+            <Grid Grid.Column="2" ClipToBounds="True" Margin="14,0,0,0">
+                <TextBlock x:Name="PartialTextBlock"
+                           VerticalAlignment="Center" HorizontalAlignment="Right"
+                           FontFamily="Yu Gothic UI, Yu Gothic, Meiryo UI, sans-serif" FontSize="13"
+                           Foreground="#FFC9C9CE" Text=""/>
+            </Grid>
         </Grid>
     </Border>
 </Window>

@@ -57,6 +57,18 @@ public partial class OverlayWindow : Window
     /// <summary>録音レベル (RMS 0..1) を反映する。どのスレッドから呼んでもよい。</summary>
     public void UpdateLevel(float rms) => _currentLevel = rms;
 
+    /// <summary>認識中（暫定）テキストを表示する。どのスレッドから呼んでもよい。</summary>
+    public void SetPartialText(string text)
+    {
+        Dispatcher.BeginInvoke(() => PartialTextBlock.Text = text);
+    }
+
+    /// <summary>認識中テキストの表示をクリアする。</summary>
+    public void ClearPartialText()
+    {
+        Dispatcher.BeginInvoke(() => PartialTextBlock.Text = "");
+    }
+
     public void ShowOverlay()
     {
         if (_visible) return;
@@ -87,6 +99,7 @@ public partial class OverlayWindow : Window
                 Hide();
                 Array.Clear(_levels);
                 _currentLevel = 0;
+                PartialTextBlock.Text = "";
             }
         };
         BeginAnimation(OpacityProperty, fadeOut);

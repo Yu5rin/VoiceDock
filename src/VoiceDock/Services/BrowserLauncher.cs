@@ -14,15 +14,43 @@ public sealed class BrowserLauncher : IDisposable
 {
     private readonly LogService _log;
     private Process? _process;
+    private string? _url;
 
     public BrowserLauncher(LogService log)
     {
         _log = log;
     }
 
+    /// <summary>認識用ブラウザのプロセスが生存しているか。</summary>
+    public bool IsRunning
+    {
+        get
+        {
+            try { return _process is { HasExited: false }; }
+            catch { return false; }
+        }
+    }
+
+    /// <summary>前回と同じ URL でブラウザを再起動する（ウォッチドッグ用）。</summary>
+    public bool Relaunch()
+    {
+        if (_url == null) return false;
+        try
+        {
+            if (_process is { HasExited: false })
+                _process.Kill(entireProcessTree: true);
+        }
+        catch { /* 終了失敗は無視して再起動を試みる */ }
+        _process?.Dispose();
+        _process = null;
+        _log.Warn("認識用ブラウザが停止していたため再起動します");
+        return Launch(_url);
+    }
+
     /// <summary>Edge/Chrome を起動して認識ページを開く。起動できたら true。</summary>
     public bool Launch(string url)
     {
+        _url = url;
         var exe = FindEdge() ?? FindChrome();
         if (exe == null)
         {

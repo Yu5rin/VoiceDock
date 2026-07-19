@@ -26,7 +26,38 @@ public partial class SettingsWindow : Window
         HotkeyBox.Text = settings.Current.Hotkey;
         StartupCheck.IsChecked = settings.Current.StartupEnabled;
 
+        InputMethodCombo.Items.Add("直接キー入力（推奨）");
+        InputMethodCombo.Items.Add("クリップボード貼り付け");
+        InputMethodCombo.SelectedIndex = settings.Current.InputMethod == InputMethod.Clipboard ? 1 : 0;
+
+        RemoveSpacesCheck.IsChecked = settings.Current.RemoveSpaces;
+        AutoPeriodCheck.IsChecked = settings.Current.AutoPeriod;
+        VoiceCommandsCheck.IsChecked = settings.Current.VoiceCommandsEnabled;
+        SoundCheck.IsChecked = settings.Current.SoundFeedback;
+
+        var version = typeof(SettingsWindow).Assembly.GetName().Version;
+        VersionText.Text = $"VoiceDock v{version?.ToString(3) ?? "?"} — Web Speech API 音声入力ツール";
+
         _initializing = false;
+    }
+
+    private void InputMethodCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_initializing) return;
+        _settings.Update(s => s.InputMethod =
+            InputMethodCombo.SelectedIndex == 1 ? InputMethod.Clipboard : InputMethod.SendInput);
+    }
+
+    private void Option_Changed(object sender, RoutedEventArgs e)
+    {
+        if (_initializing) return;
+        _settings.Update(s =>
+        {
+            s.RemoveSpaces = RemoveSpacesCheck.IsChecked == true;
+            s.AutoPeriod = AutoPeriodCheck.IsChecked == true;
+            s.VoiceCommandsEnabled = VoiceCommandsCheck.IsChecked == true;
+            s.SoundFeedback = SoundCheck.IsChecked == true;
+        });
     }
 
     private void HotkeyBox_PreviewKeyDown(object sender, KeyEventArgs e)

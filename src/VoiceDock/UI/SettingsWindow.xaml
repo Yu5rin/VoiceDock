@@ -30,6 +30,41 @@
 
             <Separator Margin="0,16" Background="{StaticResource BorderBrush}"/>
 
+            <!-- 入力方式 -->
+            <TextBlock Text="入力方式" FontWeight="Bold"/>
+            <TextBlock Text="通常は「直接キー入力」を推奨。文字が入らないアプリでは「クリップボード貼り付け」をお試しください（元のクリップボード内容は自動復元されます）"
+                       Style="{StaticResource SubText}" Margin="0,2,0,6"/>
+            <ComboBox x:Name="InputMethodCombo" SelectionChanged="InputMethodCombo_SelectionChanged"/>
+
+            <Separator Margin="0,16" Background="{StaticResource BorderBrush}"/>
+
+            <!-- テキスト整形 -->
+            <TextBlock Text="テキスト整形" FontWeight="Bold"/>
+            <TextBlock Text="認識結果の後処理を設定します" Style="{StaticResource SubText}" Margin="0,2,0,6"/>
+            <CheckBox x:Name="RemoveSpacesCheck" Content="日本語の間の不要な半角スペースを除去する"
+                      Checked="Option_Changed" Unchecked="Option_Changed"/>
+            <CheckBox x:Name="AutoPeriodCheck" Content="発話の区切りごとに文末へ「。」を自動挿入する" Margin="0,8,0,0"
+                      Checked="Option_Changed" Unchecked="Option_Changed"/>
+
+            <Separator Margin="0,16" Background="{StaticResource BorderBrush}"/>
+
+            <!-- 音声コマンド -->
+            <TextBlock Text="音声コマンド" FontWeight="Bold"/>
+            <TextBlock Text="「改行」「スペース」「タブ」とだけ発話すると、その操作を入力します"
+                       Style="{StaticResource SubText}" Margin="0,2,0,6"/>
+            <CheckBox x:Name="VoiceCommandsCheck" Content="音声コマンドを有効にする"
+                      Checked="Option_Changed" Unchecked="Option_Changed"/>
+
+            <Separator Margin="0,16" Background="{StaticResource BorderBrush}"/>
+
+            <!-- 操作音 -->
+            <TextBlock Text="操作音" FontWeight="Bold"/>
+            <TextBlock Text="録音の開始/停止時に短い音を鳴らします" Style="{StaticResource SubText}" Margin="0,2,0,6"/>
+            <CheckBox x:Name="SoundCheck" Content="操作音を鳴らす"
+                      Checked="Option_Changed" Unchecked="Option_Changed"/>
+
+            <Separator Margin="0,16" Background="{StaticResource BorderBrush}"/>
+
             <!-- スタートアップ登録 -->
             <TextBlock Text="スタートアップ登録" FontWeight="Bold"/>
             <TextBlock Text="Windows 起動時に VoiceDock を自動起動します" Style="{StaticResource SubText}" Margin="0,2,0,6"/>
@@ -44,6 +79,11 @@
                        Style="{StaticResource SubText}" Margin="0,2,0,6"/>
             <Button x:Name="OpenDictionaryButton" Content="辞書管理を開く"
                     HorizontalAlignment="Left" Click="OpenDictionaryButton_Click"/>
+
+            <Separator Margin="0,16" Background="{StaticResource BorderBrush}"/>
+
+            <!-- バージョン情報 -->
+            <TextBlock x:Name="VersionText" Style="{StaticResource SubText}" Margin="0,0,0,8"/>
 
         </StackPanel>
     </ScrollViewer>

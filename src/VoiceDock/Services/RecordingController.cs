@@ -1,5 +1,6 @@
 using System.Windows;
 using System.Windows.Threading;
+using VoiceDock.Models;
 using VoiceDock.UI;
 
 namespace VoiceDock.Services;
@@ -7,7 +8,7 @@ namespace VoiceDock.Services;
 /// <summary>
 /// 認識の開始/停止と、認識結果の入力欄への流し込みを統括する。
 /// 実際の録音・認識はブラウザ(Web Speech API)が行い、本体は
-/// 確定テキストを受け取って辞書置換のうえ SendInput で前面アプリへ入力する。
+/// 確定テキストを受け取って後処理（音声コマンド・辞書置換・整形）のうえ前面アプリへ入力する。
 /// ホットキーのトグル、30 秒無音の自動停止、トレイ・オーバーレイ制御を担う。
 /// </summary>
 public sealed class RecordingController : IDisposable
@@ -15,7 +16,8 @@ public sealed class RecordingController : IDisposable
     private static readonly TimeSpan SilenceAutoStop = TimeSpan.FromSeconds(30);
 
     private readonly LogService _log;
-    private readonly DictionaryService _dictionary;
+    private readonly SettingsService _settings;
+    private readonly TextProcessor _processor;
     private readonly SpeechBridgeServer _bridge;
     private readonly TrayIconController _tray;
     private readonly OverlayWindow _overlay;
@@ -25,17 +27,27 @@ public sealed class RecordingController : IDisposable
     private bool _listening;
     private DispatcherTimer? _silenceTimer;
 
-    public RecordingController(LogService log, DictionaryService dictionary,
+    /// <summary>録音状態の変化（トレイメニューの表記更新用）。</summary>
+    public event Action<bool>? ListeningChanged;
+
+    public bool IsListening
+    {
+        get { lock (_sync) return _listening; }
+    }
+
+    public RecordingController(LogService log, SettingsService settings, TextProcessor processor,
         SpeechBridgeServer bridge, TrayIconController tray, OverlayWindow overlay)
     {
         _log = log;
-        _dictionary = dictionary;
+        _settings = settings;
+        _processor = processor;
         _bridge = bridge;
         _tray = tray;
         _overlay = overlay;
         _dispatcher = Application.Current.Dispatcher;
 
         _bridge.FinalText += OnFinalText;
+        _bridge.PartialText += _overlay.SetPartialText;
         _bridge.LevelChanged += _overlay.UpdateLevel;
         _bridge.RecognitionError += OnRecognitionError;
     }
@@ -57,6 +69,16 @@ public sealed class RecordingController : IDisposable
         }
     }
 
+    /// <summary>トレイメニュー等からの開始/停止。UI スレッドで呼ぶこと。</summary>
+    public void ToggleFromMenu()
+    {
+        lock (_sync)
+        {
+            if (_listening) StopListening("メニュー");
+            else StartListening();
+        }
+    }
+
     private void StartListening()
     {
         if (!_bridge.IsConnected)
@@ -71,7 +93,9 @@ public sealed class RecordingController : IDisposable
         _tray.SetState(TrayState.Recording);
         _overlay.ShowOverlay();
         ResetSilenceTimer();
+        if (_settings.Current.SoundFeedback) SoundFeedback.PlayStart();
         _log.Info("録音を開始しました");
+        ListeningChanged?.Invoke(true);
     }
 
     private void StopListening(string reason)
@@ -82,14 +106,13 @@ public sealed class RecordingController : IDisposable
         StopSilenceTimer();
         _overlay.HideOverlay();
         _tray.SetState(TrayState.Idle);
+        if (_settings.Current.SoundFeedback) SoundFeedback.PlayStop();
         _log.Info($"録音を停止しました ({reason})");
+        ListeningChanged?.Invoke(false);
     }
 
-    private void OnFinalText(string text)
+    private void OnFinalText(string raw)
     {
-        text = text.Trim();
-        if (text.Length == 0) return;
-
         _dispatcher.BeginInvoke(() =>
         {
             lock (_sync)
@@ -98,13 +121,22 @@ public sealed class RecordingController : IDisposable
                 ResetSilenceTimer();
             }
 
-            // 辞書の「誤認識語→正しい語」置換を適用
-            text = _dictionary.ApplyReplacements(text);
-            _log.Recognition(text);
+            _overlay.ClearPartialText();
 
-            // フォーカス中のテキスト入力欄へ直接キー入力。
+            var processed = _processor.Process(raw);
+            if (processed.Text.Length == 0) return;
+
+            if (processed.IsCommand)
+                _log.Info($"音声コマンド「{processed.CommandName}」を実行しました");
+            else
+                _log.Recognition(processed.Text);
+
+            // フォーカス中のテキスト入力欄へ入力。
             // 入力欄が無い等で失敗した場合は何もしない（エラー通知なし）
-            if (!TextInjector.SendText(text))
+            bool ok = _settings.Current.InputMethod == InputMethod.Clipboard && !processed.IsCommand
+                ? TextInjector.SendViaClipboard(processed.Text)
+                : TextInjector.SendText(processed.Text);
+            if (!ok)
                 _log.Info("テキスト入力欄が見つからないため流し込みをスキップしました");
         });
     }

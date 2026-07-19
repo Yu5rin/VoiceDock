@@ -3,6 +3,7 @@ using System.Windows.Controls;
 using System.Windows.Input;
 using VoiceDock.Models;
 using VoiceDock.Services;
+using InputMethod = VoiceDock.Models.InputMethod;
 
 namespace VoiceDock.UI;
 

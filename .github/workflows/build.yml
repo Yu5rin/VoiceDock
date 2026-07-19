@@ -41,10 +41,13 @@ jobs:
           -o publish
 
       - name: アーティファクトのアップロード
+        # ストレージ容量超過などのアップロード失敗でビルド結果を失敗扱いにしない
+        continue-on-error: true
         uses: actions/upload-artifact@v4
         with:
           name: VoiceDock-win-x64
           path: publish/VoiceDock.exe
+          retention-days: 3
 
   # v* タグの push 時、または手動実行 (Run workflow) 時に、単一 exe をビルドして GitHub Release を作成・添付する
   release:

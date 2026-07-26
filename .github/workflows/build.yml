@@ -99,10 +99,23 @@ jobs:
           files: publish/VoiceDock-${{ steps.ver.outputs.tag }}-win-x64.exe
           body: |
             Web Speech API を用いた音声入力ツール VoiceDock の ${{ steps.ver.outputs.tag }} リリースです。
+            タスクトレイに常駐し、ホットキー（初期値 `Ctrl+Space`）で任意の Windows アプリの入力欄に音声で直接入力できます。
 
             ## 導入
-            - `VoiceDock-${{ steps.ver.outputs.tag }}-win-x64.exe` をダウンロードし、任意の場所に置いて実行してください（署名なし・インストーラーなし）。
-            - 対応 OS: Windows 10 / 11。標準搭載の Microsoft Edge（無ければ Chrome）とインターネット接続が必要です。
-            - 認識はブラウザの Web Speech API（クラウド認識）で行います。音声はクラウドに送信されます。
+            1. `VoiceDock-${{ steps.ver.outputs.tag }}-win-x64.exe` をダウンロードし、任意の場所に置いて実行します（署名なし・インストーラー不要）。
+            2. タスクトレイにマイクのアイコンが表示されます。裏で認識用ブラウザが起動します（画面には出ません）。
+            3. テキスト入力欄にカーソルを置き、`Ctrl+Space` を押して話すと文字が入力されます。もう一度押すと停止します。
 
-            詳細は README を参照してください。
+            設定・辞書管理・ログはトレイアイコンの右クリックメニューから開けます。
+
+            ## 動作条件
+            - Windows 10 / 11
+            - Microsoft Edge または Google Chrome（Windows の既定ブラウザに追従。設定で明示指定も可能）
+            - インターネット接続（Web Speech API はクラウド認識のため）
+
+            ## ご注意
+            - 音声はブラウザの音声認識サービス（クラウド）に送信されます。機密性の高い内容の取り扱いにはご注意ください。
+            - 署名なし exe のため、初回実行時に SmartScreen の警告が出る場合があります。
+            - 辞書のエクスポート CSV には社内用語・人名が含まれます。保存先・共有方法にご注意ください。
+
+            詳細は [README](https://github.com/Yu5rin/VoiceDock/blob/main/README.md) を参照してください。

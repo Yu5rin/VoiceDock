@@ -27,6 +27,16 @@ public partial class SettingsWindow : Window
         HotkeyBox.Text = settings.Current.Hotkey;
         StartupCheck.IsChecked = settings.Current.StartupEnabled;
 
+        BrowserCombo.Items.Add("既定のブラウザに合わせる");
+        BrowserCombo.Items.Add("常に Microsoft Edge");
+        BrowserCombo.Items.Add("常に Google Chrome");
+        BrowserCombo.SelectedIndex = settings.Current.Browser switch
+        {
+            BrowserChoice.Edge => 1,
+            BrowserChoice.Chrome => 2,
+            _ => 0,
+        };
+
         InputMethodCombo.Items.Add("直接キー入力（推奨）");
         InputMethodCombo.Items.Add("クリップボード貼り付け");
         InputMethodCombo.SelectedIndex = settings.Current.InputMethod == InputMethod.Clipboard ? 1 : 0;
@@ -40,6 +50,19 @@ public partial class SettingsWindow : Window
         VersionText.Text = $"VoiceDock v{version?.ToString(3) ?? "?"} — Web Speech API 音声入力ツール";
 
         _initializing = false;
+    }
+
+    private void BrowserCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_initializing) return;
+        var choice = BrowserCombo.SelectedIndex switch
+        {
+            1 => BrowserChoice.Edge,
+            2 => BrowserChoice.Chrome,
+            _ => BrowserChoice.Auto,
+        };
+        _settings.Update(s => s.Browser = choice);
+        ToastWindow.Show("認識用ブラウザの変更は、VoiceDock を再起動すると反映されます。");
     }
 
     private void InputMethodCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)

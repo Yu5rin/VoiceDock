@@ -1,24 +1,31 @@
 using System.Diagnostics;
 using System.IO;
 using Microsoft.Win32;
+using VoiceDock.Models;
 
 namespace VoiceDock.Services;
 
 /// <summary>
-/// 認識用ブラウザ(Microsoft Edge、無ければ Chrome)を起動・管理する。
-/// アプリモードで専用プロファイルを使い、画面外に常駐させて認識ページを読み込む。
-/// マイク許可はコマンドラインで自動付与し、バックグラウンドでも認識が止まらないよう
-/// スロットリング抑制フラグを付ける。
+/// 認識用ブラウザ(Chromium 系)を起動・管理する。
+/// 既定では Windows の既定ブラウザに追従し（Chrome 系なら Chrome、それ以外は Edge）、
+/// 設定で明示指定もできる。アプリモードで専用プロファイルを使い、画面外に常駐させて
+/// 認識ページを読み込む。マイク許可はコマンドラインで自動付与し、バックグラウンドでも
+/// 認識が止まらないようスロットリング抑制フラグを付ける。
 /// </summary>
 public sealed class BrowserLauncher : IDisposable
 {
     private readonly LogService _log;
+    private readonly SettingsService _settings;
     private Process? _process;
     private string? _url;
 
-    public BrowserLauncher(LogService log)
+    /// <summary>実際に起動したブラウザの表示名（未起動なら null）。</summary>
+    public string? LaunchedBrowserName { get; private set; }
+
+    public BrowserLauncher(LogService log, SettingsService settings)
     {
         _log = log;
+        _settings = settings;
     }
 
     /// <summary>認識用ブラウザのプロセスが生存しているか。</summary>
@@ -47,16 +54,17 @@ public sealed class BrowserLauncher : IDisposable
         return Launch(_url);
     }
 
-    /// <summary>Edge/Chrome を起動して認識ページを開く。起動できたら true。</summary>
+    /// <summary>設定に応じたブラウザを起動して認識ページを開く。起動できたら true。</summary>
     public bool Launch(string url)
     {
         _url = url;
-        var exe = FindEdge() ?? FindChrome();
+        var (exe, name) = ResolveBrowser();
         if (exe == null)
         {
-            _log.Error("認識用ブラウザ (Microsoft Edge / Chrome) が見つかりませんでした");
+            _log.Error("認識用ブラウザ (Microsoft Edge / Google Chrome) が見つかりませんでした");
             return false;
         }
+        LaunchedBrowserName = name;
 
         Directory.CreateDirectory(AppPaths.BrowserProfileDir);
 
@@ -88,12 +96,87 @@ public sealed class BrowserLauncher : IDisposable
         try
         {
             _process = Process.Start(psi);
-            _log.Info($"認識用ブラウザを起動しました: {Path.GetFileName(exe)}");
+            _log.Info($"認識用ブラウザを起動しました: {name} ({Path.GetFileName(exe)})");
             return _process != null;
         }
         catch (Exception ex)
         {
             _log.Error($"認識用ブラウザの起動に失敗しました: {ex.Message}");
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// 設定に応じて使用するブラウザの実行ファイルと表示名を決める。
+    /// Auto の場合は Windows の既定ブラウザに追従し、見つからなければもう一方へフォールバックする。
+    /// </summary>
+    private (string? Exe, string? Name) ResolveBrowser()
+    {
+        var choice = _settings.Current.Browser;
+
+        if (choice == BrowserChoice.Chrome)
+        {
+            var chrome = FindChrome();
+            if (chrome != null) return (chrome, "Google Chrome");
+            _log.Warn("Google Chrome が見つからないため Microsoft Edge を使用します");
+            return (FindEdge(), "Microsoft Edge");
+        }
+
+        if (choice == BrowserChoice.Edge)
+        {
+            var edge = FindEdge();
+            if (edge != null) return (edge, "Microsoft Edge");
+            _log.Warn("Microsoft Edge が見つからないため Google Chrome を使用します");
+            return (FindChrome(), "Google Chrome");
+        }
+
+        // Auto: 既定ブラウザが Chrome なら Chrome、それ以外（Edge 等）は Edge を使う。
+        // Web Speech API は Chromium 系でのみ動作するため、Firefox 等が既定の場合も Edge を使う。
+        bool defaultIsChrome = IsDefaultBrowserChrome();
+        if (defaultIsChrome)
+        {
+            var chrome = FindChrome();
+            if (chrome != null)
+            {
+                _log.Info("既定ブラウザが Chrome のため Google Chrome で認識します");
+                return (chrome, "Google Chrome");
+            }
+        }
+
+        var edgeExe = FindEdge();
+        if (edgeExe != null)
+        {
+            _log.Info("Microsoft Edge で認識します");
+            return (edgeExe, "Microsoft Edge");
+        }
+
+        var chromeExe = FindChrome();
+        if (chromeExe != null)
+        {
+            _log.Info("Edge が見つからないため Google Chrome で認識します");
+            return (chromeExe, "Google Chrome");
+        }
+        return (null, null);
+    }
+
+    /// <summary>
+    /// Windows の既定ブラウザ（https の関連付け ProgId）が Chrome かどうかを判定する。
+    /// 判定できない場合は false（＝Edge を使う）。
+    /// </summary>
+    private static bool IsDefaultBrowserChrome()
+    {
+        try
+        {
+            const string key = @"SOFTWARE\Microsoft\Windows\Shell\Associations\UrlAssociations\https\UserChoice";
+            using var userChoice = Registry.CurrentUser.OpenSubKey(key);
+            var progId = userChoice?.GetValue("ProgId") as string;
+            if (string.IsNullOrEmpty(progId)) return false;
+            // 例: ChromeHTML, ChromeHTML.XXXX（Chrome）/ MSEdgeHTM（Edge）
+            return progId.Contains("Chrome", StringComparison.OrdinalIgnoreCase)
+                   && !progId.Contains("MSEdge", StringComparison.OrdinalIgnoreCase);
+        }
+        catch
+        {
             return false;
         }
     }

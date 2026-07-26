@@ -25,8 +25,16 @@
 
             <!-- 認識エンジンの説明 -->
             <TextBlock Text="音声認識" FontWeight="Bold"/>
-            <TextBlock Text="認識はブラウザ(Edge)の Web Speech API で行います（日本語）。使用マイクは Windows の既定デバイスが使われます。音声はクラウドで認識されます。"
+            <TextBlock Text="認識はブラウザの Web Speech API で行います（日本語）。使用マイクは Windows の既定デバイスが使われます。音声はクラウドで認識されます。"
                        Style="{StaticResource SubText}" Margin="0,2,0,6"/>
+
+            <Separator Margin="0,16" Background="{StaticResource BorderBrush}"/>
+
+            <!-- 認識用ブラウザ -->
+            <TextBlock Text="認識用ブラウザ" FontWeight="Bold"/>
+            <TextBlock Text="「既定のブラウザに合わせる」では、Windows の既定が Chrome なら Chrome、それ以外は Edge を使用します（Web Speech API は Chromium 系のみ対応）。変更後は再起動で反映されます。"
+                       Style="{StaticResource SubText}" Margin="0,2,0,6"/>
+            <ComboBox x:Name="BrowserCombo" SelectionChanged="BrowserCombo_SelectionChanged"/>
 
             <Separator Margin="0,16" Background="{StaticResource BorderBrush}"/>
 

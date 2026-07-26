@@ -1,5 +1,16 @@
 namespace VoiceDock.Models;
 
+/// <summary>認識に使用するブラウザの選択方針。</summary>
+public enum BrowserChoice
+{
+    /// <summary>Windows の既定ブラウザに合わせる（Chrome 系なら Chrome、それ以外は Edge）</summary>
+    Auto,
+    /// <summary>常に Microsoft Edge を使う</summary>
+    Edge,
+    /// <summary>常に Google Chrome を使う</summary>
+    Chrome,
+}
+
 /// <summary>テキストの入力方式。</summary>
 public enum InputMethod
 {
@@ -22,6 +33,9 @@ public class AppSettings
 
     /// <summary>テキストの入力方式</summary>
     public InputMethod InputMethod { get; set; } = InputMethod.SendInput;
+
+    /// <summary>認識に使用するブラウザ（既定は Windows の既定ブラウザに追従）</summary>
+    public BrowserChoice Browser { get; set; } = BrowserChoice.Auto;
 
     /// <summary>音声コマンド（「改行」等の発話を操作に変換）を有効にする</summary>
     public bool VoiceCommandsEnabled { get; set; } = true;

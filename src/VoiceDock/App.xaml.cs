@@ -67,7 +67,7 @@ public partial class App : Application
         try
         {
             _bridge.Start();
-            _browser = new BrowserLauncher(_log);
+            _browser = new BrowserLauncher(_log, _settings);
             if (!_browser.Launch(_bridge.PageUrl))
             {
                 _tray.SetState(TrayState.Error);

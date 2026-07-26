@@ -10,9 +10,14 @@
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <ApplicationManifest>app.manifest</ApplicationManifest>
+    <!--
+      exe・タスクバー・ウィンドウのアイコン。タスクトレイアイコン (UI/IconFactory.cs) と
+      同じマイク意匠で、tools/generate_app_icon.py により生成する。
+    -->
+    <ApplicationIcon>app.ico</ApplicationIcon>
     <!-- Linux 等の非 Windows 環境でも win 向けビルドを可能にする -->
     <EnableWindowsTargeting>true</EnableWindowsTargeting>
-    <Version>0.5.1</Version>
+    <Version>0.5.2</Version>
     <Product>VoiceDock</Product>
     <Description>Web Speech API を用いた音声入力ツール</Description>
   </PropertyGroup>

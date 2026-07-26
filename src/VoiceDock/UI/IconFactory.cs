@@ -9,6 +9,8 @@ public enum TrayState { Idle, Recording, Error }
 /// <summary>
 /// タスクトレイ用アイコンを実行時に描画生成する。
 /// 待機中: モノクロ / 録音中: アクセントカラー(赤系) / エラー: 警告色(オレンジ系)。
+/// 図形は exe のアプリアイコン (app.ico) と同一意匠。変更時は tools/generate_app_icon.py
+/// の座標も合わせて更新すること。
 /// </summary>
 public static class IconFactory
 {

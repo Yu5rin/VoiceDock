@@ -37,6 +37,12 @@ public class AppSettings
     /// <summary>認識に使用するブラウザ（既定は Windows の既定ブラウザに追従）</summary>
     public BrowserChoice Browser { get; set; } = BrowserChoice.Auto;
 
+    /// <summary>
+    /// 対応環境では端末内で音声認識を行う（音声をクラウドへ送信しない）。
+    /// 非対応のブラウザ・言語パック未導入の場合は自動でクラウド認識にフォールバックする。
+    /// </summary>
+    public bool PreferLocalRecognition { get; set; }
+
     /// <summary>音声コマンド（「改行」等の発話を操作に変換）を有効にする</summary>
     public bool VoiceCommandsEnabled { get; set; } = true;
 

@@ -26,6 +26,8 @@ public sealed class RecordingController : IDisposable
     private readonly object _sync = new();
     private bool _listening;
     private DispatcherTimer? _silenceTimer;
+    private bool _localModeNotified;
+    private bool _localFallbackNotified;
 
     /// <summary>録音状態の変化（トレイメニューの表記更新用）。</summary>
     public event Action<bool>? ListeningChanged;
@@ -50,6 +52,7 @@ public sealed class RecordingController : IDisposable
         _bridge.PartialText += _overlay.SetPartialText;
         _bridge.LevelChanged += _overlay.UpdateLevel;
         _bridge.RecognitionError += OnRecognitionError;
+        _bridge.RecognitionModeReported += OnRecognitionModeReported;
     }
 
     /// <summary>ホットキー押下時の入口。UI スレッドで呼ぶこと。</summary>
@@ -89,7 +92,7 @@ public sealed class RecordingController : IDisposable
         }
 
         _listening = true;
-        _ = _bridge.StartRecognitionAsync();
+        _ = _bridge.StartRecognitionAsync(_settings.Current.PreferLocalRecognition);
         _tray.SetState(TrayState.Recording);
         _overlay.ShowOverlay();
         ResetSilenceTimer();
@@ -138,6 +141,47 @@ public sealed class RecordingController : IDisposable
                 : TextInjector.SendText(processed.Text);
             if (!ok)
                 _log.Info("テキスト入力欄が見つからないため流し込みをスキップしました");
+        });
+    }
+
+    /// <summary>
+    /// 実際の認識モードの通知。ローカル処理を希望したのに使えなかった場合は、
+    /// 毎回うるさくならないよう起動後 1 回だけ通知する。
+    /// </summary>
+    private void OnRecognitionModeReported(string mode)
+    {
+        _dispatcher.BeginInvoke(() =>
+        {
+            switch (mode)
+            {
+                case "local":
+                    if (!_localModeNotified)
+                    {
+                        _localModeNotified = true;
+                        ToastWindow.Show("端末内で音声認識しています（音声はクラウドに送信されません）。");
+                    }
+                    _log.Info("認識モード: 端末内処理 (processLocally)");
+                    break;
+                case "downloading":
+                    if (!_localFallbackNotified)
+                    {
+                        _localFallbackNotified = true;
+                        ToastWindow.Show("端末内認識の言語パックを取得しています。完了までクラウド認識で動作します。", ToastKind.Warning);
+                    }
+                    _log.Info("認識モード: クラウド（端末内認識の言語パックを取得中）");
+                    break;
+                case "unsupported":
+                    if (!_localFallbackNotified)
+                    {
+                        _localFallbackNotified = true;
+                        ToastWindow.Show("このブラウザは端末内認識に対応していないため、クラウド認識で動作します。", ToastKind.Warning);
+                    }
+                    _log.Info("認識モード: クラウド（端末内認識は非対応）");
+                    break;
+                default:
+                    _log.Info("認識モード: クラウド");
+                    break;
+            }
         });
     }
 

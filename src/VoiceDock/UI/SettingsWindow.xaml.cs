@@ -45,6 +45,7 @@ public partial class SettingsWindow : Window
         AutoPeriodCheck.IsChecked = settings.Current.AutoPeriod;
         VoiceCommandsCheck.IsChecked = settings.Current.VoiceCommandsEnabled;
         SoundCheck.IsChecked = settings.Current.SoundFeedback;
+        LocalRecognitionCheck.IsChecked = settings.Current.PreferLocalRecognition;
 
         var version = typeof(SettingsWindow).Assembly.GetName().Version;
         VersionText.Text = $"VoiceDock v{version?.ToString(3) ?? "?"} — Web Speech API 音声入力ツール";
@@ -81,6 +82,7 @@ public partial class SettingsWindow : Window
             s.AutoPeriod = AutoPeriodCheck.IsChecked == true;
             s.VoiceCommandsEnabled = VoiceCommandsCheck.IsChecked == true;
             s.SoundFeedback = SoundCheck.IsChecked == true;
+            s.PreferLocalRecognition = LocalRecognitionCheck.IsChecked == true;
         });
     }
 

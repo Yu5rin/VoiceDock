@@ -44,6 +44,13 @@ public sealed class SpeechBridgeServer : IDisposable
     /// <summary>認識エラー（Web Speech API の error など）。</summary>
     public event Action<string>? RecognitionError;
 
+    /// <summary>
+    /// 実際の認識モードの通知。
+    /// "local"=端末内処理 / "downloading"=言語パック取得中（今回はクラウド）
+    /// / "unsupported"=ローカル非対応（クラウド） / "cloud"=クラウド指定。
+    /// </summary>
+    public event Action<string>? RecognitionModeReported;
+
     public SpeechBridgeServer(LogService log)
     {
         _log = log;
@@ -64,7 +71,12 @@ public sealed class SpeechBridgeServer : IDisposable
     }
 
     /// <summary>ブラウザに認識開始を指示する。</summary>
-    public Task StartRecognitionAsync() => SendCommandAsync("start");
+    /// <param name="processLocally">
+    /// 端末内での認識（Web Speech API の processLocally）を要求するかどうか。
+    /// 非対応環境や言語パック未導入の場合はブラウザ側でクラウド認識にフォールバックする。
+    /// </param>
+    public Task StartRecognitionAsync(bool processLocally = false) =>
+        SendCommandAsync("start", $",\"processLocally\":{(processLocally ? "true" : "false")}");
 
     /// <summary>ブラウザに認識停止を指示する。</summary>
     public Task StopRecognitionAsync() => SendCommandAsync("stop");
@@ -184,6 +196,10 @@ public sealed class SpeechBridgeServer : IDisposable
                     var state = root.TryGetProperty("state", out var st) ? st.GetString() : "";
                     if (state == "ready") Ready?.Invoke();
                     break;
+                case "mode":
+                    if (root.TryGetProperty("value", out var mv))
+                        RecognitionModeReported?.Invoke(mv.GetString() ?? "");
+                    break;
                 case "error":
                     var detail = root.TryGetProperty("detail", out var de) ? de.GetString() : "";
                     RecognitionError?.Invoke(detail ?? "");
@@ -196,7 +212,8 @@ public sealed class SpeechBridgeServer : IDisposable
         }
     }
 
-    private async Task SendCommandAsync(string cmd)
+    /// <param name="extraJson">"cmd" に続けて連結する追加の JSON（先頭にカンマを含める）。</param>
+    private async Task SendCommandAsync(string cmd, string extraJson = "")
     {
         var socket = _socket;
         if (socket is not { State: WebSocketState.Open })
@@ -205,7 +222,7 @@ public sealed class SpeechBridgeServer : IDisposable
             return;
         }
 
-        var payload = Encoding.UTF8.GetBytes($"{{\"cmd\":\"{cmd}\"}}");
+        var payload = Encoding.UTF8.GetBytes($"{{\"cmd\":\"{cmd}\"{extraJson}}}");
         await _sendLock.WaitAsync();
         try
         {
@@ -276,15 +293,47 @@ public sealed class SpeechBridgeServer : IDisposable
     ws.onopen = () => send({type:'status', state:'ready'});
     ws.onmessage = (e) => {
       let m; try{ m = JSON.parse(e.data); }catch(_){ return; }
-      if(m.cmd === 'start') startRecog();
+      if(m.cmd === 'start') startRecog(!!m.processLocally);
       else if(m.cmd === 'stop') stopRecog();
     };
     ws.onclose = () => setTimeout(connect, 1000);
     ws.onerror = () => { try{ ws.close(); }catch(_){} };
   }
 
+  function getSR(){ return window.SpeechRecognition || window.webkitSpeechRecognition; }
+
+  // 端末内での認識(processLocally)が使えるかを判定し、可能なら有効化する。
+  // 言語パック未導入なら裏で取得を開始し、今回はクラウド認識で動かす。
+  async function applyLocalMode(r, want){
+    if(!want){ send({type:'mode', value:'cloud'}); return; }
+    const SR = getSR();
+    if(!('processLocally' in r)){ send({type:'mode', value:'unsupported'}); return; }
+    try{
+      const opts = {langs:['ja-JP'], processLocally:true};
+      let st = null;
+      if(typeof SR.available === 'function') st = await SR.available(opts);
+      else if(typeof SR.availableOnDevice === 'function') st = await SR.availableOnDevice('ja-JP');
+
+      if(st === 'available'){
+        r.processLocally = true;
+        send({type:'mode', value:'local'});
+        return;
+      }
+      if(st === 'downloadable' || st === 'downloading'){
+        // 言語パックの導入を裏で開始（完了後の起動からローカル処理になる）
+        try{
+          if(typeof SR.install === 'function') SR.install({langs:['ja-JP']}).catch(()=>{});
+          else if(typeof SR.installOnDevice === 'function') SR.installOnDevice('ja-JP');
+        }catch(_){}
+        send({type:'mode', value:'downloading'});
+        return;
+      }
+    }catch(_){}
+    send({type:'mode', value:'unsupported'});
+  }
+
   function setupRecog(){
-    const SR = window.webkitSpeechRecognition || window.SpeechRecognition;
+    const SR = getSR();
     if(!SR){ send({type:'error', detail:'speech-unsupported'}); return null; }
     const r = new SR();
     r.lang = 'ja-JP';
@@ -304,10 +353,13 @@ public sealed class SpeechBridgeServer : IDisposable
     return r;
   }
 
-  function startRecog(){
+  async function startRecog(processLocally){
     shouldListen = true;
     if(!recog) recog = setupRecog();
     if(!recog) return;
+    // ローカル処理の可否判定（非対応・未導入なら自動でクラウドにフォールバック）
+    await applyLocalMode(recog, processLocally);
+    if(!shouldListen) return;   // 判定中に停止された場合
     try{ recog.start(); }catch(_){ /* 既に開始済みなら無視 */ }
     send({type:'status', state:'listening'});
     startLevel();

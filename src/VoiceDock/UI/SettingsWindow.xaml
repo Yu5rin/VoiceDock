@@ -38,6 +38,15 @@
 
             <Separator Margin="0,16" Background="{StaticResource BorderBrush}"/>
 
+            <!-- 端末内での認識（プライバシー） -->
+            <TextBlock Text="端末内で認識する（プライバシー）" FontWeight="Bold"/>
+            <TextBlock Text="対応ブラウザでは音声をクラウドに送らず、端末内だけで認識します。非対応の場合や日本語の言語パックが未導入の場合は、自動でクラウド認識に切り替わります（新しめの Edge / Chrome が必要です）。"
+                       Style="{StaticResource SubText}" Margin="0,2,0,6"/>
+            <CheckBox x:Name="LocalRecognitionCheck" Content="可能なら端末内で認識する"
+                      Checked="Option_Changed" Unchecked="Option_Changed"/>
+
+            <Separator Margin="0,16" Background="{StaticResource BorderBrush}"/>
+
             <!-- 入力方式 -->
             <TextBlock Text="入力方式" FontWeight="Bold"/>
             <TextBlock Text="通常は「直接キー入力」を推奨。文字が入らないアプリでは「クリップボード貼り付け」をお試しください（元のクリップボード内容は自動復元されます）"

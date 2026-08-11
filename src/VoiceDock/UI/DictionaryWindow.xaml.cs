@@ -21,6 +21,7 @@ public partial class DictionaryWindow : Window
     public DictionaryWindow(DictionaryService dictionary)
     {
         InitializeComponent();
+        AppTheme.ApplyToWindow(this);
         _dictionary = dictionary;
         _rows = new ObservableCollection<DictionaryEntry>(dictionary.Entries);
         Grid.ItemsSource = _rows;

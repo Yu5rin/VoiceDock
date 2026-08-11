@@ -19,6 +19,7 @@ public partial class LogWindow : Window
     public LogWindow(LogService log)
     {
         InitializeComponent();
+        AppTheme.ApplyToWindow(this);
         _log = log;
 
         foreach (var label in new[] { "すべて", "認識のみ", "エラー・警告のみ", "動作のみ" })

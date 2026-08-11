@@ -20,6 +20,7 @@ public partial class SettingsWindow : Window
     public SettingsWindow(SettingsService settings, Func<HotkeySpec, bool> applyHotkey, Action openDictionary)
     {
         InitializeComponent();
+        AppTheme.ApplyToWindow(this);
         _settings = settings;
         _applyHotkey = applyHotkey;
         _openDictionary = openDictionary;

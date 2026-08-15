@@ -147,11 +147,16 @@ public static class TextInjector
                 inputs.Add(MakeUnicodeInput(ch, keyUp: true));
             }
 
-            // 送信中だけ対象コントロールの IME コンテキストを一時的に外す。
-            // 日本語 IME がオンのまま SendInput の Unicode イベントを送ると、
-            // IME の非同期な変換・確定処理を経由してしまい、複数フレーズを
-            // 連続入力した際に文字の順序が入れ替わることがあるための対策。
-            IntPtr prevHimc = ImmAssociateContext(focused, IntPtr.Zero);
+            // 送信中だけ対象アプリの IME を一時的にオフにする。
+            //
+            // 日本語 IME がオンのまま SendInput の Unicode イベントを送ると、文字が
+            // IME の変換バッファ（未確定文字列）に吸い込まれ、後からまとめて逆順で
+            // 確定される。結果として「変換された語だけが文末に逆順で並ぶ」現象になる。
+            //
+            // IME 状態の変更は ImmAssociateContext ではなく、対象スレッドの既定 IME
+            // ウィンドウへ WM_IME_CONTROL を送る方式を使う。ImmAssociateContext は
+            // 他プロセスのウィンドウには効かないため。
+            bool imeWasOpen = TrySetImeOpen(focused, open: false);
             try
             {
                 // 一括送信でイベント間への割り込みを防ぐ（大きすぎる場合は分割）
@@ -166,16 +171,17 @@ public static class TextInjector
                         return false;
                 }
 
-                // 送信したキーイベントが対象アプリ側で処理し終わるまで待つ（同期バリア）。
-                // これを待たずに次のフレーズを送ると、前の入力の処理中に割り込んでしまう。
-                SendMessageTimeout(focused, WM_NULL, IntPtr.Zero, IntPtr.Zero,
-                    SMTO_NORMAL | SMTO_ABORTIFHUNG, 500, out _);
+                // 送信したキーイベントを対象アプリが読み取り終える前に IME を戻すと、
+                // 残りの文字が再び IME を経由してしまう。文字数に応じた待ち時間を置く
+                // （SendMessage による同期は入力キューを追い越すためバリアにならない）。
+                if (imeWasOpen)
+                    Thread.Sleep(Math.Clamp(text.Length, 25, 150));
                 return true;
             }
             finally
             {
-                // IME コンテキストを元に戻す
-                ImmAssociateContext(focused, prevHimc);
+                // IME を元の状態に戻す
+                if (imeWasOpen) TrySetImeOpen(focused, open: true);
             }
         }
     }
@@ -264,22 +270,46 @@ public static class TextInjector
     [DllImport("user32.dll", SetLastError = true)]
     private static extern uint SendInput(uint nInputs, INPUT[] pInputs, int cbSize);
 
-    private const uint WM_NULL = 0x0000;
-    private const uint SMTO_NORMAL = 0x0000;
-    private const uint SMTO_ABORTIFHUNG = 0x0002;
+    private const uint WM_IME_CONTROL = 0x0283;
+    private const int IMC_GETOPENSTATUS = 0x0005;
+    private const int IMC_SETOPENSTATUS = 0x0006;
 
     /// <summary>
-    /// 対象ウィンドウのメッセージキューが捌けるまで（同期的に）待つための WM_NULL 送信。
-    /// SendInput で積んだキーイベントの処理完了バリアとして使う。
+    /// 対象ウィンドウ（別プロセスでも可）の IME のオン/オフを切り替える。
+    /// 戻り値は「変更前にオンだったかどうか」。オフに切り替える必要が無かった場合や
+    /// IME が無い環境では false を返す。
     /// </summary>
-    [DllImport("user32.dll", SetLastError = true)]
-    private static extern IntPtr SendMessageTimeout(IntPtr hWnd, uint Msg, IntPtr wParam, IntPtr lParam,
-        uint fuFlags, uint uTimeout, out IntPtr lpdwResult);
+    private static bool TrySetImeOpen(IntPtr hwnd, bool open)
+    {
+        try
+        {
+            // 対象スレッドの既定 IME ウィンドウ。ウィンドウメッセージ経由なので
+            // 他プロセスのウィンドウに対しても機能する。
+            IntPtr imeWnd = ImmGetDefaultIMEWnd(hwnd);
+            if (imeWnd == IntPtr.Zero) return false;
 
-    /// <summary>
-    /// 指定コントロールの IME コンテキストを差し替える。戻り値は差し替え前の HIMC で、
-    /// 元に戻す際に再度この関数へ渡す。IntPtr.Zero を渡すと IME を一時的に無効化できる。
-    /// </summary>
+            if (!open)
+            {
+                bool wasOpen = SendMessage(imeWnd, WM_IME_CONTROL, (IntPtr)IMC_GETOPENSTATUS, IntPtr.Zero) != IntPtr.Zero;
+                if (!wasOpen) return false;   // 元々オフなら何もしない
+                SendMessage(imeWnd, WM_IME_CONTROL, (IntPtr)IMC_SETOPENSTATUS, IntPtr.Zero);
+                return true;
+            }
+
+            SendMessage(imeWnd, WM_IME_CONTROL, (IntPtr)IMC_SETOPENSTATUS, (IntPtr)1);
+            return true;
+        }
+        catch
+        {
+            // IME が利用できない環境では何もしない（通常の入力にフォールバック）
+            return false;
+        }
+    }
+
+    /// <summary>指定ウィンドウを持つスレッドの既定 IME ウィンドウを取得する。</summary>
     [DllImport("imm32.dll")]
-    private static extern IntPtr ImmAssociateContext(IntPtr hWnd, IntPtr hIMC);
+    private static extern IntPtr ImmGetDefaultIMEWnd(IntPtr hWnd);
+
+    [DllImport("user32.dll", CharSet = CharSet.Auto)]
+    private static extern IntPtr SendMessage(IntPtr hWnd, uint Msg, IntPtr wParam, IntPtr lParam);
 }

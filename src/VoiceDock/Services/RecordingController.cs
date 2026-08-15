@@ -116,7 +116,9 @@ public sealed class RecordingController : IDisposable
 
     private void OnFinalText(string raw)
     {
-        _dispatcher.BeginInvoke(() =>
+        // 認識確定から入力までの体感遅延を減らすため、通常優先度のキュー待ちを
+        // 挟まず最優先(Send)で処理する。
+        _dispatcher.BeginInvoke(DispatcherPriority.Send, new Action(() =>
         {
             lock (_sync)
             {
@@ -141,7 +143,7 @@ public sealed class RecordingController : IDisposable
                 : TextInjector.SendText(processed.Text);
             if (!ok)
                 _log.Info("テキスト入力欄が見つからないため流し込みをスキップしました");
-        });
+        }));
     }
 
     /// <summary>

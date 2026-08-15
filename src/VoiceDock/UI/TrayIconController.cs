@@ -13,8 +13,10 @@ public sealed class TrayIconController : IDisposable
     private readonly ToolStripMenuItem _recordItem;
 
     public event Action? RecordToggleRequested;
+    public event Action? UndoRequested;
     public event Action? SettingsRequested;
     public event Action? DictionaryRequested;
+    public event Action? SnippetRequested;
     public event Action? LogRequested;
     public event Action? ExitRequested;
 
@@ -27,9 +29,11 @@ public sealed class TrayIconController : IDisposable
         };
         _recordItem = CreateItem("録音開始", () => RecordToggleRequested?.Invoke());
         menu.Items.Add(_recordItem);
+        menu.Items.Add(CreateItem("直前の入力を取り消す", () => UndoRequested?.Invoke()));
         menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add(CreateItem("設定", () => SettingsRequested?.Invoke()));
         menu.Items.Add(CreateItem("辞書管理", () => DictionaryRequested?.Invoke()));
+        menu.Items.Add(CreateItem("定型文", () => SnippetRequested?.Invoke()));
         menu.Items.Add(CreateItem("ログ表示", () => LogRequested?.Invoke()));
         menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add(CreateItem("終了", () => ExitRequested?.Invoke()));

@@ -14,19 +14,32 @@ public partial class SettingsWindow : Window
 {
     private readonly SettingsService _settings;
     private readonly Func<HotkeySpec, bool> _applyHotkey;
+    private readonly Func<HotkeySpec, bool> _applyUndoHotkey;
     private readonly Action _openDictionary;
+    private readonly Action _openSnippets;
+    private readonly Action _openAppRules;
     private bool _initializing = true;
 
-    public SettingsWindow(SettingsService settings, Func<HotkeySpec, bool> applyHotkey, Action openDictionary)
+    public SettingsWindow(SettingsService settings,
+        Func<HotkeySpec, bool> applyHotkey, Func<HotkeySpec, bool> applyUndoHotkey,
+        Action openDictionary, Action openSnippets, Action openAppRules)
     {
         InitializeComponent();
         AppTheme.ApplyToWindow(this);
         _settings = settings;
         _applyHotkey = applyHotkey;
+        _applyUndoHotkey = applyUndoHotkey;
         _openDictionary = openDictionary;
+        _openSnippets = openSnippets;
+        _openAppRules = openAppRules;
 
         HotkeyBox.Text = settings.Current.Hotkey;
+        UndoHotkeyBox.Text = settings.Current.UndoHotkey;
         StartupCheck.IsChecked = settings.Current.StartupEnabled;
+
+        HotkeyModeCombo.Items.Add("押すたびに開始/停止（トグル）");
+        HotkeyModeCombo.Items.Add("押している間だけ録音");
+        HotkeyModeCombo.SelectedIndex = settings.Current.HotkeyMode == HotkeyMode.PushToTalk ? 1 : 0;
 
         BrowserCombo.Items.Add("既定のブラウザに合わせる");
         BrowserCombo.Items.Add("常に Microsoft Edge");
@@ -45,6 +58,8 @@ public partial class SettingsWindow : Window
         RemoveSpacesCheck.IsChecked = settings.Current.RemoveSpaces;
         AutoPeriodCheck.IsChecked = settings.Current.AutoPeriod;
         VoiceCommandsCheck.IsChecked = settings.Current.VoiceCommandsEnabled;
+        SnippetsCheck.IsChecked = settings.Current.SnippetsEnabled;
+        UndoCheck.IsChecked = settings.Current.UndoEnabled;
         SoundCheck.IsChecked = settings.Current.SoundFeedback;
         LocalRecognitionCheck.IsChecked = settings.Current.PreferLocalRecognition;
 
@@ -82,10 +97,53 @@ public partial class SettingsWindow : Window
             s.RemoveSpaces = RemoveSpacesCheck.IsChecked == true;
             s.AutoPeriod = AutoPeriodCheck.IsChecked == true;
             s.VoiceCommandsEnabled = VoiceCommandsCheck.IsChecked == true;
+            s.SnippetsEnabled = SnippetsCheck.IsChecked == true;
+            s.UndoEnabled = UndoCheck.IsChecked == true;
             s.SoundFeedback = SoundCheck.IsChecked == true;
             s.PreferLocalRecognition = LocalRecognitionCheck.IsChecked == true;
         });
     }
+
+    private void HotkeyModeCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_initializing) return;
+        var mode = HotkeyModeCombo.SelectedIndex == 1 ? HotkeyMode.PushToTalk : HotkeyMode.Toggle;
+        _settings.Update(s => s.HotkeyMode = mode);
+    }
+
+    private void UndoHotkeyBox_PreviewKeyDown(object sender, KeyEventArgs e)
+    {
+        e.Handled = true;
+
+        var key = e.Key == Key.System ? e.SystemKey : e.Key;
+        if (key is Key.LeftCtrl or Key.RightCtrl or Key.LeftAlt or Key.RightAlt
+            or Key.LeftShift or Key.RightShift or Key.LWin or Key.RWin)
+            return;
+
+        var spec = new HotkeySpec(Keyboard.Modifiers, key);
+        if (spec.Modifiers == ModifierKeys.None)
+        {
+            UndoHotkeyWarning.Text = "修飾キー（Ctrl / Alt / Shift）との組み合わせを指定してください。";
+            UndoHotkeyWarning.Visibility = Visibility.Visible;
+            return;
+        }
+
+        if (_applyUndoHotkey(spec))
+        {
+            UndoHotkeyBox.Text = spec.ToString();
+            UndoHotkeyWarning.Visibility = Visibility.Collapsed;
+            _settings.Update(s => s.UndoHotkey = spec.ToString());
+        }
+        else
+        {
+            UndoHotkeyWarning.Text = $"{spec} は他のアプリと衝突しているため登録できませんでした。別のキーを指定してください。";
+            UndoHotkeyWarning.Visibility = Visibility.Visible;
+        }
+    }
+
+    private void OpenSnippets_Click(object sender, RoutedEventArgs e) => _openSnippets();
+
+    private void OpenAppRules_Click(object sender, RoutedEventArgs e) => _openAppRules();
 
     private void HotkeyBox_PreviewKeyDown(object sender, KeyEventArgs e)
     {

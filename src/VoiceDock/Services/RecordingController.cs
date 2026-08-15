@@ -29,6 +29,18 @@ public sealed class RecordingController : IDisposable
     private bool _localModeNotified;
     private bool _localFallbackNotified;
 
+    /// <summary>直前に入力したテキストの文字数（取り消し用）。0 なら取り消す対象なし。</summary>
+    private int _lastInjectedLength;
+
+    /// <summary>入力先として観測したアプリ（プロセス名）。アプリ別設定の候補に使う。</summary>
+    private readonly SortedSet<string> _seenApps = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>これまでに入力先となったアプリのプロセス名一覧。</summary>
+    public IReadOnlyList<string> SeenApps
+    {
+        get { lock (_sync) return _seenApps.ToList(); }
+    }
+
     /// <summary>録音状態の変化（トレイメニューの表記更新用）。</summary>
     public event Action<bool>? ListeningChanged;
 
@@ -82,6 +94,33 @@ public sealed class RecordingController : IDisposable
         }
     }
 
+    /// <summary>
+    /// 押している間だけ録音する方式で、ホットキーが押されたときの入口。
+    /// IME 変換中は無視する。
+    /// </summary>
+    public void BeginPushToTalk()
+    {
+        if (ImeGuard.IsImeComposing())
+        {
+            _log.Info("IME 変換中のためホットキーを無視しました");
+            return;
+        }
+
+        lock (_sync)
+        {
+            if (!_listening) StartListening();
+        }
+    }
+
+    /// <summary>押しっぱなし方式で、ホットキーが離されたときの入口。</summary>
+    public void EndPushToTalk()
+    {
+        lock (_sync)
+        {
+            if (_listening) StopListening("キーを離した");
+        }
+    }
+
     private void StartListening()
     {
         if (!_bridge.IsConnected)
@@ -129,20 +168,84 @@ public sealed class RecordingController : IDisposable
             _overlay.ClearPartialText();
 
             var processed = _processor.Process(raw);
+
+            // 「取り消し」コマンド: 直前に入力した文字数ぶん削除する
+            if (processed.Kind == ProcessedKind.Undo)
+            {
+                UndoLastInjection("音声コマンド");
+                return;
+            }
+
             if (processed.Text.Length == 0) return;
 
-            if (processed.IsCommand)
+            if (processed.Kind == ProcessedKind.Command)
                 _log.Info($"音声コマンド「{processed.CommandName}」を実行しました");
             else
                 _log.Recognition(processed.Text);
 
-            // フォーカス中のテキスト入力欄へ入力。
-            // 入力欄が無い等で失敗した場合は何もしない（エラー通知なし）
-            bool ok = _settings.Current.InputMethod == InputMethod.Clipboard && !processed.IsCommand
-                ? TextInjector.SendViaClipboard(processed.Text)
-                : TextInjector.SendText(processed.Text);
-            if (!ok)
-                _log.Info("テキスト入力欄が見つからないため流し込みをスキップしました");
+            Inject(processed.Text, isCommand: processed.Kind == ProcessedKind.Command);
+        }));
+    }
+
+    /// <summary>
+    /// テキストを前面アプリへ入力する。入力方式はアプリ別設定があればそれを優先する。
+    /// 入力欄が無い等で失敗した場合は何もしない（エラー通知なし）。
+    /// </summary>
+    private void Inject(string text, bool isCommand)
+    {
+        var app = TextInjector.GetForegroundProcessName();
+        if (app.Length > 0)
+        {
+            lock (_sync) _seenApps.Add(app);
+        }
+
+        var method = ResolveInputMethod(app);
+
+        // 改行やタブなどの操作系はクリップボード貼り付けに向かないため直接入力する
+        bool ok = method == InputMethod.Clipboard && !isCommand
+            ? TextInjector.SendViaClipboard(text)
+            : TextInjector.SendText(text);
+
+        if (!ok)
+        {
+            _log.Info("テキスト入力欄が見つからないため流し込みをスキップしました");
+            _lastInjectedLength = 0;
+            return;
+        }
+
+        _lastInjectedLength = text.Length;
+    }
+
+    /// <summary>アプリ別の入力方式の上書きがあればそれを、無ければ既定の入力方式を返す。</summary>
+    private InputMethod ResolveInputMethod(string appName)
+    {
+        var s = _settings.Current;
+        if (appName.Length > 0 && s.AppInputMethods.TryGetValue(appName, out var perApp))
+            return perApp;
+        return s.InputMethod;
+    }
+
+    /// <summary>直前に入力したテキストを取り消す（入力した文字数ぶん BackSpace を送る）。</summary>
+    public void UndoLastInjection(string reason)
+    {
+        _dispatcher.BeginInvoke(DispatcherPriority.Send, new Action(() =>
+        {
+            if (!_settings.Current.UndoEnabled) return;
+
+            int count = _lastInjectedLength;
+            if (count <= 0)
+            {
+                _log.Info("取り消せる入力がありません");
+                return;
+            }
+
+            if (TextInjector.SendBackspaces(count))
+                _log.Info($"直前の入力 {count} 文字を取り消しました ({reason})");
+            else
+                _log.Info("取り消し先の入力欄が見つかりませんでした");
+
+            // 二重に取り消さないようクリアする
+            _lastInjectedLength = 0;
         }));
     }
 

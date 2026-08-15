@@ -1,0 +1,57 @@
+<Window x:Class="VoiceDock.UI.AppRulesWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="VoiceDock アプリ別の入力方式"
+        Width="560" Height="480" MinWidth="440" MinHeight="320"
+        Style="{StaticResource WindowStyle}"
+        WindowStartupLocation="CenterScreen">
+    <Grid Margin="20,16">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+
+        <TextBlock Grid.Row="0" Text="アプリ別の入力方式" FontSize="18" FontWeight="Bold"/>
+        <TextBlock Grid.Row="1" Style="{StaticResource SubText}" Margin="0,4,0,10"
+                   Text="特定のアプリだけ入力方式を変えられます。直接キー入力で文字が入らないアプリ（一部の業務システム、リモートデスクトップ等）は「クリップボード貼り付け」にしてください。ここに無いアプリは、設定画面の既定の入力方式で動作します。"/>
+
+        <!-- 追加行: 入力先として使ったことのあるアプリから選ぶ / 手入力もできる -->
+        <Grid Grid.Row="2" Margin="0,0,0,10">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="Auto"/>
+            </Grid.ColumnDefinitions>
+            <ComboBox Grid.Column="0" x:Name="AppCombo" IsEditable="True"
+                      ToolTip="プロセス名（拡張子なし）。例: notepad, chrome, Teams"/>
+            <Button Grid.Column="1" Content="追加" Margin="8,0,0,0" Click="Add_Click"/>
+        </Grid>
+
+        <DataGrid Grid.Row="3" x:Name="Grid"
+                  AutoGenerateColumns="False" CanUserAddRows="False"
+                  CanUserSortColumns="False" CanUserReorderColumns="False"
+                  SelectionUnit="FullRow" SelectionMode="Extended"
+                  Background="{StaticResource PanelBrush}">
+            <DataGrid.Columns>
+                <DataGridTextColumn Header="アプリ（プロセス名）" Binding="{Binding AppName}" Width="*" IsReadOnly="True"/>
+                <DataGridTemplateColumn Header="入力方式" Width="200">
+                    <DataGridTemplateColumn.CellTemplate>
+                        <DataTemplate>
+                            <ComboBox SelectedIndex="{Binding MethodIndex, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                      Margin="2" BorderThickness="0">
+                                <ComboBoxItem Content="直接キー入力"/>
+                                <ComboBoxItem Content="クリップボード貼り付け"/>
+                            </ComboBox>
+                        </DataTemplate>
+                    </DataGridTemplateColumn.CellTemplate>
+                </DataGridTemplateColumn>
+            </DataGrid.Columns>
+        </DataGrid>
+
+        <StackPanel Grid.Row="4" Orientation="Horizontal" Margin="0,12,0,0">
+            <Button Content="選択行を削除" Click="Delete_Click"/>
+        </StackPanel>
+    </Grid>
+</Window>

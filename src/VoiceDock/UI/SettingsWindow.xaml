@@ -21,6 +21,24 @@
             <TextBlock x:Name="HotkeyWarning" Foreground="{StaticResource WarnBrush}"
                        TextWrapping="Wrap" Margin="0,4,0,0" Visibility="Collapsed"/>
 
+            <TextBlock Text="操作方式" Margin="0,10,0,0"/>
+            <TextBlock Text="「押している間だけ録音」は、キーを押している間だけ録音します。短い一言を挟む用途では誤操作が少なくなります。"
+                       Style="{StaticResource SubText}" Margin="0,2,0,6"/>
+            <ComboBox x:Name="HotkeyModeCombo" SelectionChanged="HotkeyModeCombo_SelectionChanged"/>
+
+            <Separator Margin="0,16" Background="{StaticResource BorderBrush}"/>
+
+            <!-- 取り消し -->
+            <TextBlock Text="直前の入力を取り消す" FontWeight="Bold"/>
+            <TextBlock Text="誤認識をやり直すための機能です。「とりけし」と発話するか、下のホットキーで、直前に入力した分だけ削除します。"
+                       Style="{StaticResource SubText}" Margin="0,2,0,6"/>
+            <CheckBox x:Name="UndoCheck" Content="取り消しを有効にする"
+                      Checked="Option_Changed" Unchecked="Option_Changed"/>
+            <TextBox x:Name="UndoHotkeyBox" IsReadOnly="True" Cursor="Hand" Margin="0,8,0,0"
+                     PreviewKeyDown="UndoHotkeyBox_PreviewKeyDown"/>
+            <TextBlock x:Name="UndoHotkeyWarning" Foreground="{StaticResource WarnBrush}"
+                       TextWrapping="Wrap" Margin="0,4,0,0" Visibility="Collapsed"/>
+
             <Separator Margin="0,16" Background="{StaticResource BorderBrush}"/>
 
             <!-- 認識エンジンの説明 -->
@@ -53,6 +71,10 @@
                        Style="{StaticResource SubText}" Margin="0,2,0,6"/>
             <ComboBox x:Name="InputMethodCombo" SelectionChanged="InputMethodCombo_SelectionChanged"/>
 
+            <TextBlock Text="特定のアプリだけ入力方式を変えることもできます（直接入力で文字が入らないアプリ向け）"
+                       Style="{StaticResource SubText}" Margin="0,8,0,6"/>
+            <Button Content="アプリ別の入力方式を設定" HorizontalAlignment="Left" Click="OpenAppRules_Click"/>
+
             <Separator Margin="0,16" Background="{StaticResource BorderBrush}"/>
 
             <!-- テキスト整形 -->
@@ -67,10 +89,20 @@
 
             <!-- 音声コマンド -->
             <TextBlock Text="音声コマンド" FontWeight="Bold"/>
-            <TextBlock Text="「改行」「スペース」「タブ」とだけ発話すると、その操作を入力します"
+            <TextBlock Text="その語だけを発話すると、対応する文字や操作を入力します。誤爆を防ぐため、文中に含まれるだけでは反応しません。&#10;・操作: 改行 / スペース / タブ&#10;・句読点: まる（。） てん（、） びっくり（！） はてな（？）&#10;・記号: アットマーク（@） コロン スラッシュ ハイフン アンダーバー ドット かっこ 矢印 など"
                        Style="{StaticResource SubText}" Margin="0,2,0,6"/>
-            <CheckBox x:Name="VoiceCommandsCheck" Content="音声コマンドを有効にする"
+            <CheckBox x:Name="VoiceCommandsCheck" Content="音声コマンド（句読点・記号を含む）を有効にする"
                       Checked="Option_Changed" Unchecked="Option_Changed"/>
+
+            <Separator Margin="0,16" Background="{StaticResource BorderBrush}"/>
+
+            <!-- 定型文 -->
+            <TextBlock Text="定型文" FontWeight="Bold"/>
+            <TextBlock Text="「読み」だけを発話すると、登録した本文に展開します（例:「じゅうしょ」→ 会社の住所全文）"
+                       Style="{StaticResource SubText}" Margin="0,2,0,6"/>
+            <CheckBox x:Name="SnippetsCheck" Content="定型文を有効にする"
+                      Checked="Option_Changed" Unchecked="Option_Changed"/>
+            <Button Content="定型文を編集" HorizontalAlignment="Left" Margin="0,8,0,0" Click="OpenSnippets_Click"/>
 
             <Separator Margin="0,16" Background="{StaticResource BorderBrush}"/>
 

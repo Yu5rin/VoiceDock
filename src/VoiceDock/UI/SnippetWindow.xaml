@@ -1,0 +1,36 @@
+<Window x:Class="VoiceDock.UI.SnippetWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="VoiceDock 定型文"
+        Width="620" Height="520" MinWidth="460" MinHeight="340"
+        Style="{StaticResource WindowStyle}"
+        WindowStartupLocation="CenterScreen"
+        Closing="Window_Closing">
+    <Grid Margin="20,16">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+
+        <TextBlock Grid.Row="0" Text="定型文" FontSize="18" FontWeight="Bold"/>
+        <TextBlock Grid.Row="1" Style="{StaticResource SubText}" Margin="0,4,0,10"
+                   Text="「読み」だけを発話すると、登録した本文に展開して入力します（例:「じゅうしょ」→ 会社の住所全文）。誤爆を防ぐため、発話全体が読みと一致した場合のみ展開されます。"/>
+
+        <DataGrid Grid.Row="2" x:Name="Grid"
+                  AutoGenerateColumns="False" CanUserAddRows="True"
+                  CanUserSortColumns="False" CanUserReorderColumns="False"
+                  SelectionUnit="CellOrRowHeader"
+                  Background="{StaticResource PanelBrush}">
+            <DataGrid.Columns>
+                <DataGridTextColumn Header="読み（発話）" Binding="{Binding Phrase, UpdateSourceTrigger=PropertyChanged}" Width="200"/>
+                <DataGridTextColumn Header="展開後の本文" Binding="{Binding Expansion, UpdateSourceTrigger=PropertyChanged}" Width="*"/>
+            </DataGrid.Columns>
+        </DataGrid>
+
+        <StackPanel Grid.Row="3" Orientation="Horizontal" Margin="0,12,0,0">
+            <Button Content="行を削除" Click="DeleteRows_Click"/>
+        </StackPanel>
+    </Grid>
+</Window>

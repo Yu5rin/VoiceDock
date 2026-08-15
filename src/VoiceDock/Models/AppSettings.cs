@@ -20,6 +20,15 @@ public enum InputMethod
     Clipboard,
 }
 
+/// <summary>ホットキーの操作方式。</summary>
+public enum HotkeyMode
+{
+    /// <summary>押すたびに録音開始/停止を切り替える（既定）</summary>
+    Toggle,
+    /// <summary>キーを押している間だけ録音する</summary>
+    PushToTalk,
+}
+
 /// <summary>
 /// アプリ設定。%APPDATA%\VoiceDock\settings.json に保存される。
 /// </summary>
@@ -28,11 +37,27 @@ public class AppSettings
     /// <summary>録音開始/停止のトグルホットキー（例: "Ctrl+Space"）</summary>
     public string Hotkey { get; set; } = "Ctrl+Space";
 
+    /// <summary>ホットキーの操作方式（トグル / 押している間だけ録音）</summary>
+    public HotkeyMode HotkeyMode { get; set; } = HotkeyMode.Toggle;
+
+    /// <summary>直前に入力したテキストを取り消すホットキー</summary>
+    public string UndoHotkey { get; set; } = "Ctrl+Shift+Space";
+
+    /// <summary>直前の入力の取り消し（音声コマンド「とりけし」およびホットキー）を有効にする</summary>
+    public bool UndoEnabled { get; set; } = true;
+
     /// <summary>Windows 起動時の自動起動</summary>
     public bool StartupEnabled { get; set; } = true;
 
     /// <summary>テキストの入力方式</summary>
     public InputMethod InputMethod { get; set; } = InputMethod.SendInput;
+
+    /// <summary>
+    /// アプリ（プロセス名）ごとの入力方式の上書き。
+    /// ここに登録されたアプリが前面にある場合は、既定の入力方式より優先される。
+    /// キーは拡張子なしのプロセス名（大文字小文字は区別しない）。
+    /// </summary>
+    public Dictionary<string, InputMethod> AppInputMethods { get; set; } = new(StringComparer.OrdinalIgnoreCase);
 
     /// <summary>認識に使用するブラウザ（既定は Windows の既定ブラウザに追従）</summary>
     public BrowserChoice Browser { get; set; } = BrowserChoice.Auto;
@@ -43,8 +68,14 @@ public class AppSettings
     /// </summary>
     public bool PreferLocalRecognition { get; set; }
 
-    /// <summary>音声コマンド（「改行」等の発話を操作に変換）を有効にする</summary>
+    /// <summary>
+    /// 音声コマンドを有効にする。改行・スペース等の操作、句読点（「まる」「てん」）、
+    /// 記号（「アットマーク」等）の発話入力をまとめて制御する。
+    /// </summary>
     public bool VoiceCommandsEnabled { get; set; } = true;
+
+    /// <summary>定型文スニペット（「じゅうしょ」→ 住所全文 等）を有効にする</summary>
+    public bool SnippetsEnabled { get; set; } = true;
 
     /// <summary>認識結果から日本語間の不要な半角スペースを除去する</summary>
     public bool RemoveSpaces { get; set; } = true;
@@ -58,5 +89,11 @@ public class AppSettings
     /// <summary>初回起動ガイドを表示済みかどうか</summary>
     public bool FirstRunDone { get; set; }
 
-    public AppSettings Clone() => (AppSettings)MemberwiseClone();
+    public AppSettings Clone()
+    {
+        var clone = (AppSettings)MemberwiseClone();
+        // 参照型は複製しないと、コピー元と同じ辞書を共有してしまう
+        clone.AppInputMethods = new Dictionary<string, InputMethod>(AppInputMethods, StringComparer.OrdinalIgnoreCase);
+        return clone;
+    }
 }

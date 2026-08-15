@@ -22,6 +22,61 @@ public static class TextInjector
     public static bool HasTextInputFocus() => GetFocusedControl() != IntPtr.Zero;
 
     /// <summary>
+    /// 前面ウィンドウを持つプロセスの名前（拡張子なし）を取得する。
+    /// 取得できない場合は空文字。アプリごとの入力方式の切り替えに使う。
+    /// </summary>
+    public static string GetForegroundProcessName()
+    {
+        try
+        {
+            var hwnd = GetForegroundWindow();
+            if (hwnd == IntPtr.Zero) return "";
+            GetWindowThreadProcessId(hwnd, out uint pid);
+            if (pid == 0) return "";
+            using var proc = System.Diagnostics.Process.GetProcessById((int)pid);
+            return proc.ProcessName;
+        }
+        catch
+        {
+            return "";
+        }
+    }
+
+    /// <summary>
+    /// 直前に入力した文字数ぶん BackSpace を送って取り消す。
+    /// 対象アプリが入力を受け付けない場合は false。
+    /// </summary>
+    public static bool SendBackspaces(int count)
+    {
+        if (count <= 0) return true;
+
+        lock (SendLock)
+        {
+            var focused = GetFocusedControl();
+            if (focused == IntPtr.Zero) return false;
+
+            var inputs = new List<INPUT>(count * 2);
+            for (int i = 0; i < count; i++)
+            {
+                inputs.Add(MakeKeyInput(VK_BACK, keyUp: false));
+                inputs.Add(MakeKeyInput(VK_BACK, keyUp: true));
+            }
+
+            var array = inputs.ToArray();
+            const int chunkSize = 512;
+            for (int offset = 0; offset < array.Length; offset += chunkSize)
+            {
+                int n = Math.Min(chunkSize, array.Length - offset);
+                var chunk = new INPUT[n];
+                Array.Copy(array, offset, chunk, 0, n);
+                if (SendInput((uint)n, chunk, Marshal.SizeOf<INPUT>()) != n)
+                    return false;
+            }
+            return true;
+        }
+    }
+
+    /// <summary>
     /// 前面ウィンドウの中でキーボードフォーカスを持つコントロールのハンドルを取得する。
     /// 無い（デスクトップ等）場合は IntPtr.Zero。
     /// </summary>
@@ -123,6 +178,7 @@ public static class TextInjector
 
     private const ushort VK_CONTROL = 0x11;
     private const ushort VK_V = 0x56;
+    private const ushort VK_BACK = 0x08;
 
     /// <summary>テキストをキー入力として送出する。成功可否を返す。</summary>
     public static bool SendText(string text)

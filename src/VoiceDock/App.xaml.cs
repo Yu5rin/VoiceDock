@@ -14,6 +14,7 @@ public partial class App : Application
     private LogService? _log;
     private SettingsService? _settings;
     private DictionaryService? _dictionary;
+    private SnippetService? _snippets;
     private SpeechBridgeServer? _bridge;
     private BrowserLauncher? _browser;
     private HotkeyManager? _hotkey;
@@ -24,6 +25,8 @@ public partial class App : Application
 
     private SettingsWindow? _settingsWindow;
     private DictionaryWindow? _dictionaryWindow;
+    private SnippetWindow? _snippetWindow;
+    private AppRulesWindow? _appRulesWindow;
     private LogWindow? _logWindow;
 
     protected override void OnStartup(StartupEventArgs e)
@@ -53,9 +56,13 @@ public partial class App : Application
         _dictionary = new DictionaryService(_log);
         _dictionary.Load();
 
+        _snippets = new SnippetService(_log);
+        _snippets.Load();
+
         _tray = new TrayIconController();
         _tray.SettingsRequested += ShowSettings;
         _tray.DictionaryRequested += ShowDictionary;
+        _tray.SnippetRequested += ShowSnippets;
         _tray.LogRequested += ShowLog;
         _tray.ExitRequested += ExitApplication;
 
@@ -81,10 +88,11 @@ public partial class App : Application
             ToastWindow.Show($"認識エンジンの初期化に失敗しました: {ex.Message}", ToastKind.Error);
         }
 
-        var processor = new TextProcessor(_settings, _dictionary);
+        var processor = new TextProcessor(_settings, _dictionary, _snippets);
         _controller = new RecordingController(_log, _settings, processor, _bridge, _tray, _overlay);
         _controller.ListeningChanged += listening => _tray!.SetListening(listening);
         _tray.RecordToggleRequested += () => _controller!.ToggleFromMenu();
+        _tray.UndoRequested += () => _controller!.UndoLastInjection("トレイメニュー");
 
         // ブラウザ監視: 認識用ブラウザが落ちていたら自動再起動する
         _watchdog = new System.Windows.Threading.DispatcherTimer
@@ -99,8 +107,18 @@ public partial class App : Application
         _watchdog.Start();
 
         // グローバルホットキー登録（衝突時はトーストで警告）
-        _hotkey = new HotkeyManager();
-        _hotkey.HotkeyPressed += () => _controller.Toggle();
+        _hotkey = new HotkeyManager
+        {
+            PushToTalk = _settings.Current.HotkeyMode == HotkeyMode.PushToTalk,
+        };
+        _hotkey.HotkeyPressed += () =>
+        {
+            if (_hotkey!.PushToTalk) _controller!.BeginPushToTalk();
+            else _controller!.Toggle();
+        };
+        _hotkey.HotkeyReleased += () => _controller!.EndPushToTalk();
+        _hotkey.UndoPressed += () => _controller!.UndoLastInjection("ホットキー");
+
         if (HotkeySpec.TryParse(_settings.Current.Hotkey, out var spec))
         {
             if (!_hotkey.TryRegister(spec))
@@ -113,6 +131,20 @@ public partial class App : Application
         {
             _log.Warn($"ホットキー設定 \"{_settings.Current.Hotkey}\" を解釈できませんでした");
         }
+
+        // 取り消しホットキー（衝突しても録音側には影響しないため、ログのみ）
+        if (HotkeySpec.TryParse(_settings.Current.UndoHotkey, out var undoSpec))
+        {
+            if (!_hotkey.TryRegisterUndo(undoSpec))
+                _log.Warn($"取り消しホットキー {undoSpec} は他のアプリと衝突しているため登録できませんでした");
+        }
+
+        // 設定変更（操作方式）を即座にホットキー側へ反映する
+        _settings.Changed += s =>
+            Dispatcher.BeginInvoke(() =>
+            {
+                if (_hotkey != null) _hotkey.PushToTalk = s.HotkeyMode == HotkeyMode.PushToTalk;
+            });
 
         // スタートアップ登録を設定に同期する
         try
@@ -148,6 +180,22 @@ public partial class App : Application
         return false;
     }
 
+    /// <summary>設定画面からの取り消しホットキー変更。衝突時は元のキーへ復元し false を返す。</summary>
+    private bool ApplyUndoHotkey(HotkeySpec spec)
+    {
+        if (_hotkey == null) return false;
+        if (_hotkey.TryRegisterUndo(spec))
+        {
+            _log?.Info($"取り消しホットキーを {spec} に変更しました");
+            return true;
+        }
+
+        _log?.Warn($"取り消しホットキー {spec} は他のアプリと衝突しています");
+        if (HotkeySpec.TryParse(_settings?.Current.UndoHotkey, out var previous))
+            _hotkey.TryRegisterUndo(previous);
+        return false;
+    }
+
     private void ShowSettings()
     {
         if (_settings == null) return;
@@ -156,9 +204,36 @@ public partial class App : Application
             _settingsWindow.Activate();
             return;
         }
-        _settingsWindow = new SettingsWindow(_settings, ApplyHotkey, ShowDictionary);
+        _settingsWindow = new SettingsWindow(_settings, ApplyHotkey, ApplyUndoHotkey,
+            ShowDictionary, ShowSnippets, ShowAppRules);
         _settingsWindow.Show();
         _settingsWindow.Activate();
+    }
+
+    private void ShowSnippets()
+    {
+        if (_snippets == null) return;
+        if (_snippetWindow is { IsLoaded: true })
+        {
+            _snippetWindow.Activate();
+            return;
+        }
+        _snippetWindow = new SnippetWindow(_snippets);
+        _snippetWindow.Show();
+        _snippetWindow.Activate();
+    }
+
+    private void ShowAppRules()
+    {
+        if (_settings == null) return;
+        if (_appRulesWindow is { IsLoaded: true })
+        {
+            _appRulesWindow.Activate();
+            return;
+        }
+        _appRulesWindow = new AppRulesWindow(_settings, _controller?.SeenApps ?? Array.Empty<string>());
+        _appRulesWindow.Show();
+        _appRulesWindow.Activate();
     }
 
     private void ShowDictionary()

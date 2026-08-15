@@ -28,7 +28,7 @@ Web Speech API はブラウザ内でのみ動作し、単体では他アプリ�
 - **逐次入力（速記感）**: 確定したフレーズが出るたびに入力されます
 - **認識中テキストのライブ表示**: 話している内容がオーバーレイにリアルタイム表示されます
 - **音声コマンド（既定 ON）**: その語だけを発話すると対応する文字・操作を入力（文中では誤爆しません）
-    - 操作: 「改行」「スペース」「タブ」（改行は Shift+Enter / Enter を設定で選択可）
+    - 操作: 「改行」「スペース」「タブ」（改行は Shift+Enter / Enter / Alt+Enter を設定で選択可）
     - 句読点: 「まる」→ 。 /「てん」→ 、 /「びっくり」→ ！ /「はてな」→ ？
     - 記号: 「アットマーク」→ @ /「コロン」「スラッシュ」「ハイフン」「アンダーバー」「ドット」「かっこ」「矢印」など
 - **直前の入力を取り消す（既定 ON）**: 「とりけし」と発話、ホットキー（既定 `Ctrl+Shift+Space`）、またはトレイメニューから、直前に入力した分だけ削除
@@ -94,7 +94,7 @@ Web Speech API はブラウザ内でのみ動作し、単体では他アプリ�
 dotnet publish src/VoiceDock/VoiceDock.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:EnableCompressionInSingleFile=true -o publish
 ```
 
-`publish/VoiceDock.exe` が生成されます。GitHub Actions（`.github/workflows/build.yml`）でも同じ手順でビルドし、アーティファクトとして exe を取得できます。タグ push または Actions の「Run workflow」で GitHub Release を作成できます。
+`publish/VoiceDock.exe` が生成されます。GitHub Actions（`.github/workflows/build.yml`）でも同じ手順でビルドし、アーティファクトとして exe を取得できます。GitHub Release は Actions の「Run workflow」から作成できます（Actions の無料枠を無駄に消費しないよう、タグ push では起動しません）。
 
 ## 実装メモ・既知の制限
 
@@ -106,7 +106,7 @@ dotnet publish src/VoiceDock/VoiceDock.csproj -c Release -r win-x64 --self-conta
 - **辞書ヒント**: Web Speech API は認識前のヒント指定に対応しないため、辞書は認識後の強制置換のみで反映します
 - **日本語 IME との競合対策**: 直接キー入力(SendInput)方式では、日本語 IME がオンだと送った文字が IME の変換バッファに吸い込まれ、後からまとめて逆順で確定される（変換された語だけが文末に逆順で並ぶ）現象が起きます。対策として、送信中だけ対象アプリの IME を一時的にオフにし（既定 IME ウィンドウへの `WM_IME_CONTROL`。他プロセスのウィンドウにも効く方式）、送信を直列化しています。それでも崩れる場合は、設定の入力方式を「クリップボード貼り付け」に切り替えると IME を完全に迂回できます
 - **句読点の自動挿入**: 「発話の区切りごとに文末へ。を自動挿入」は既定 OFF です。Web Speech API は息継ぎでフレーズを区切るため、1 文を途中で区切って話すと文中に。が入ってしまうためです。句読点は音声コマンド（「まる」「てん」）で明示的に入力する方式を推奨します
-- **改行の送り方**: 「改行」コマンドは Unicode 文字ではなく実際のキー入力として送ります。Claude Desktop・Slack・Teams などは Enter が「送信」に割り当てられているため、既定は **Shift+Enter** です。メモ帳やエディタが主な入力先の場合は、設定から Enter に変更してください
+- **改行の送り方**: 「改行」コマンドは Unicode 文字ではなく実際のキー入力として送ります。既定の **Shift+Enter** はメモ帳やエディタを含む大半のアプリで改行になり、かつ Enter が「送信」になるチャットアプリ（Claude Desktop・Slack・Teams 等）でも誤送信しないため、通常はこのままで問題ありません。Excel はセル内改行が Alt+Enter（Shift+Enter は上のセルへ移動）のため、設定から Alt+Enter を選べます
 - **取り消しの仕組み**: 直前に入力した文字数ぶん BackSpace を送る実装です。入力後に手動で文字を打ったり、アプリ側で自動整形が入った場合は、意図した範囲と異なることがあります
 - **押している間だけ録音**: RegisterHotKey はキーを押した瞬間しか通知しないため、押下後にキー状態をポーリングして離されたことを検出しています
 - **端末内認識**: `SpeechRecognition.processLocally` を利用します。ブラウザが未対応、または日本語の言語パックが未導入の場合はクラウド認識にフォールバックします（未導入時は言語パックの取得を裏で開始し、次回以降に端末内認識へ切り替わります）。実際に使われたモードはログとトーストで確認できます

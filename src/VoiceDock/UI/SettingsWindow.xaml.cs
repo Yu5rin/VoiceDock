@@ -41,9 +41,15 @@ public partial class SettingsWindow : Window
         HotkeyModeCombo.Items.Add("押している間だけ録音");
         HotkeyModeCombo.SelectedIndex = settings.Current.HotkeyMode == HotkeyMode.PushToTalk ? 1 : 0;
 
-        NewlineCombo.Items.Add("Shift+Enter（チャットアプリ向け・推奨）");
-        NewlineCombo.Items.Add("Enter（メモ帳・エディタ向け）");
-        NewlineCombo.SelectedIndex = settings.Current.NewlineMode == NewlineMode.Enter ? 1 : 0;
+        NewlineCombo.Items.Add("Shift+Enter（推奨・大半のアプリで改行）");
+        NewlineCombo.Items.Add("Enter（Shift+Enter が効かないアプリ向け）");
+        NewlineCombo.Items.Add("Alt+Enter（Excel のセル内改行）");
+        NewlineCombo.SelectedIndex = settings.Current.NewlineMode switch
+        {
+            NewlineMode.Enter => 1,
+            NewlineMode.AltEnter => 2,
+            _ => 0,
+        };
 
         BrowserCombo.Items.Add("既定のブラウザに合わせる");
         BrowserCombo.Items.Add("常に Microsoft Edge");
@@ -111,7 +117,12 @@ public partial class SettingsWindow : Window
     private void NewlineCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
         if (_initializing) return;
-        var mode = NewlineCombo.SelectedIndex == 1 ? NewlineMode.Enter : NewlineMode.ShiftEnter;
+        var mode = NewlineCombo.SelectedIndex switch
+        {
+            1 => NewlineMode.Enter,
+            2 => NewlineMode.AltEnter,
+            _ => NewlineMode.ShiftEnter,
+        };
         _settings.Update(s => s.NewlineMode = mode);
     }
 

@@ -23,10 +23,15 @@ public enum InputMethod
 /// <summary>改行の送出方法。</summary>
 public enum NewlineMode
 {
-    /// <summary>Shift+Enter で改行する。チャットアプリ（Enter が送信になるもの）向け（既定）</summary>
+    /// <summary>
+    /// Shift+Enter で改行する（既定）。メモ帳等の通常の入力欄でも改行として扱われ、
+    /// かつ Enter が「送信」になるチャットアプリでも誤送信しないため、最も安全。
+    /// </summary>
     ShiftEnter,
-    /// <summary>Enter キーで改行する。メモ帳やエディタなど通常の入力欄向け</summary>
+    /// <summary>Enter キーで改行する。Shift+Enter が効かない一部のアプリ向け</summary>
     Enter,
+    /// <summary>Alt+Enter で改行する。Excel のセル内改行向け</summary>
+    AltEnter,
 }
 
 /// <summary>ホットキーの操作方式。</summary>

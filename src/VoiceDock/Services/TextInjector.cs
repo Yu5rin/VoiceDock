@@ -1,4 +1,5 @@
 using System.Runtime.InteropServices;
+using VoiceDock.Models;
 
 namespace VoiceDock.Services;
 
@@ -176,31 +177,37 @@ public static class TextInjector
         }
     };
 
-    /// <summary>
-    /// 改行のキーイベントを組み立てる。Shift+Enter か Enter 単独かを選べる。
-    /// </summary>
-    private static void AppendNewlineKeys(List<INPUT> inputs, bool withShift)
+    /// <summary>改行のキーイベントを組み立てる（修飾キー + Enter）。</summary>
+    private static void AppendNewlineKeys(List<INPUT> inputs, NewlineMode mode)
     {
-        if (withShift) inputs.Add(MakeKeyInput(VK_SHIFT, keyUp: false));
+        ushort? modifier = mode switch
+        {
+            NewlineMode.ShiftEnter => VK_SHIFT,
+            NewlineMode.AltEnter => VK_MENU,
+            _ => null,
+        };
+
+        if (modifier is { } mod) inputs.Add(MakeKeyInput(mod, keyUp: false));
         inputs.Add(MakeKeyInput(VK_RETURN, keyUp: false));
         inputs.Add(MakeKeyInput(VK_RETURN, keyUp: true));
-        if (withShift) inputs.Add(MakeKeyInput(VK_SHIFT, keyUp: true));
+        if (modifier is { } mod2) inputs.Add(MakeKeyInput(mod2, keyUp: true));
     }
 
     private const ushort VK_CONTROL = 0x11;
     private const ushort VK_V = 0x56;
     private const ushort VK_BACK = 0x08;
     private const ushort VK_SHIFT = 0x10;
+    private const ushort VK_MENU = 0x12;   // Alt
     private const ushort VK_RETURN = 0x0D;
 
     /// <summary>
     /// テキストをキー入力として送出する。成功可否を返す。
     /// </summary>
-    /// <param name="shiftEnterForNewline">
-    /// 改行を Shift+Enter として送るかどうか。Claude Desktop / Slack / Teams のように
-    /// Enter が「送信」に割り当てられているアプリでは true にする。
+    /// <param name="newlineMode">
+    /// 改行をどのキー操作として送るか。Shift+Enter は多くのアプリで改行になり、
+    /// Enter が「送信」のチャットアプリでも誤送信しないため既定にしている。
     /// </param>
-    public static bool SendText(string text, bool shiftEnterForNewline = true)
+    public static bool SendText(string text, NewlineMode newlineMode = NewlineMode.ShiftEnter)
     {
         if (string.IsNullOrEmpty(text)) return true;
 
@@ -220,7 +227,7 @@ public static class TextInjector
                     // 改行は Unicode 文字ではなく実際の Enter キーとして送る。
                     // Unicode の CR を送るとチャットアプリでは「送信」と解釈されてしまい、
                     // かつ改行を受け付けない入力欄では何も起きないことがあるため。
-                    AppendNewlineKeys(inputs, shiftEnterForNewline);
+                    AppendNewlineKeys(inputs, newlineMode);
                     continue;
                 }
                 inputs.Add(MakeUnicodeInput(c, keyUp: false));

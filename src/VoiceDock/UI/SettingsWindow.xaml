@@ -95,7 +95,7 @@
                       Checked="Option_Changed" Unchecked="Option_Changed"/>
 
             <TextBlock Text="「改行」の送り方" Margin="0,10,0,0"/>
-            <TextBlock Text="Claude Desktop・Slack・Teams などは Enter が「送信」のため、Shift+Enter で改行します。メモ帳やエディタが主な入力先の場合は Enter を選んでください。"
+            <TextBlock Text="Shift+Enter はメモ帳やエディタを含む大半のアプリで改行になり、Enter が「送信」になるチャットアプリ（Claude Desktop・Slack・Teams 等）でも誤送信しないため、通常はこのままで問題ありません。Excel のセル内で改行したい場合は Alt+Enter を選んでください。"
                        Style="{StaticResource SubText}" Margin="0,2,0,6"/>
             <ComboBox x:Name="NewlineCombo" SelectionChanged="NewlineCombo_SelectionChanged"/>
 

@@ -20,6 +20,15 @@ public enum InputMethod
     Clipboard,
 }
 
+/// <summary>改行の送出方法。</summary>
+public enum NewlineMode
+{
+    /// <summary>Shift+Enter で改行する。チャットアプリ（Enter が送信になるもの）向け（既定）</summary>
+    ShiftEnter,
+    /// <summary>Enter キーで改行する。メモ帳やエディタなど通常の入力欄向け</summary>
+    Enter,
+}
+
 /// <summary>ホットキーの操作方式。</summary>
 public enum HotkeyMode
 {
@@ -51,6 +60,13 @@ public class AppSettings
 
     /// <summary>テキストの入力方式</summary>
     public InputMethod InputMethod { get; set; } = InputMethod.SendInput;
+
+    /// <summary>
+    /// 「改行」コマンドの送出方法。
+    /// Enter が送信になるチャットアプリ（Claude Desktop, Slack, Teams 等）が主用途のため、
+    /// 既定は Shift+Enter とする。
+    /// </summary>
+    public NewlineMode NewlineMode { get; set; } = NewlineMode.ShiftEnter;
 
     /// <summary>
     /// アプリ（プロセス名）ごとの入力方式の上書き。

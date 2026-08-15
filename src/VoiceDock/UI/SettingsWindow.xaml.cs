@@ -41,6 +41,10 @@ public partial class SettingsWindow : Window
         HotkeyModeCombo.Items.Add("押している間だけ録音");
         HotkeyModeCombo.SelectedIndex = settings.Current.HotkeyMode == HotkeyMode.PushToTalk ? 1 : 0;
 
+        NewlineCombo.Items.Add("Shift+Enter（チャットアプリ向け・推奨）");
+        NewlineCombo.Items.Add("Enter（メモ帳・エディタ向け）");
+        NewlineCombo.SelectedIndex = settings.Current.NewlineMode == NewlineMode.Enter ? 1 : 0;
+
         BrowserCombo.Items.Add("既定のブラウザに合わせる");
         BrowserCombo.Items.Add("常に Microsoft Edge");
         BrowserCombo.Items.Add("常に Google Chrome");
@@ -102,6 +106,13 @@ public partial class SettingsWindow : Window
             s.SoundFeedback = SoundCheck.IsChecked == true;
             s.PreferLocalRecognition = LocalRecognitionCheck.IsChecked == true;
         });
+    }
+
+    private void NewlineCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_initializing) return;
+        var mode = NewlineCombo.SelectedIndex == 1 ? NewlineMode.Enter : NewlineMode.ShiftEnter;
+        _settings.Update(s => s.NewlineMode = mode);
     }
 
     private void HotkeyModeCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)

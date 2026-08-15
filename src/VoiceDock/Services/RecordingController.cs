@@ -200,11 +200,12 @@ public sealed class RecordingController : IDisposable
         }
 
         var method = ResolveInputMethod(app);
+        bool shiftEnter = _settings.Current.NewlineMode == NewlineMode.ShiftEnter;
 
         // 改行やタブなどの操作系はクリップボード貼り付けに向かないため直接入力する
         bool ok = method == InputMethod.Clipboard && !isCommand
             ? TextInjector.SendViaClipboard(text)
-            : TextInjector.SendText(text);
+            : TextInjector.SendText(text, shiftEnter);
 
         if (!ok)
         {

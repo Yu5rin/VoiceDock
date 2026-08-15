@@ -176,12 +176,31 @@ public static class TextInjector
         }
     };
 
+    /// <summary>
+    /// 改行のキーイベントを組み立てる。Shift+Enter か Enter 単独かを選べる。
+    /// </summary>
+    private static void AppendNewlineKeys(List<INPUT> inputs, bool withShift)
+    {
+        if (withShift) inputs.Add(MakeKeyInput(VK_SHIFT, keyUp: false));
+        inputs.Add(MakeKeyInput(VK_RETURN, keyUp: false));
+        inputs.Add(MakeKeyInput(VK_RETURN, keyUp: true));
+        if (withShift) inputs.Add(MakeKeyInput(VK_SHIFT, keyUp: true));
+    }
+
     private const ushort VK_CONTROL = 0x11;
     private const ushort VK_V = 0x56;
     private const ushort VK_BACK = 0x08;
+    private const ushort VK_SHIFT = 0x10;
+    private const ushort VK_RETURN = 0x0D;
 
-    /// <summary>テキストをキー入力として送出する。成功可否を返す。</summary>
-    public static bool SendText(string text)
+    /// <summary>
+    /// テキストをキー入力として送出する。成功可否を返す。
+    /// </summary>
+    /// <param name="shiftEnterForNewline">
+    /// 改行を Shift+Enter として送るかどうか。Claude Desktop / Slack / Teams のように
+    /// Enter が「送信」に割り当てられているアプリでは true にする。
+    /// </param>
+    public static bool SendText(string text, bool shiftEnterForNewline = true)
     {
         if (string.IsNullOrEmpty(text)) return true;
 
@@ -196,11 +215,16 @@ public static class TextInjector
             var inputs = new List<INPUT>(text.Length * 2);
             foreach (char c in text)
             {
-                // 改行は Enter キーとしてではなく LF のユニコード入力として送ると
-                // 受け側で無視されることがあるため CR に正規化する
-                char ch = c == '\n' ? '\r' : c;
-                inputs.Add(MakeUnicodeInput(ch, keyUp: false));
-                inputs.Add(MakeUnicodeInput(ch, keyUp: true));
+                if (c is '\n' or '\r')
+                {
+                    // 改行は Unicode 文字ではなく実際の Enter キーとして送る。
+                    // Unicode の CR を送るとチャットアプリでは「送信」と解釈されてしまい、
+                    // かつ改行を受け付けない入力欄では何も起きないことがあるため。
+                    AppendNewlineKeys(inputs, shiftEnterForNewline);
+                    continue;
+                }
+                inputs.Add(MakeUnicodeInput(c, keyUp: false));
+                inputs.Add(MakeUnicodeInput(c, keyUp: true));
             }
 
             // 送信中だけ対象アプリの IME を一時的にオフにする。

@@ -94,6 +94,11 @@
             <CheckBox x:Name="VoiceCommandsCheck" Content="音声コマンド（句読点・記号を含む）を有効にする"
                       Checked="Option_Changed" Unchecked="Option_Changed"/>
 
+            <TextBlock Text="「改行」の送り方" Margin="0,10,0,0"/>
+            <TextBlock Text="Claude Desktop・Slack・Teams などは Enter が「送信」のため、Shift+Enter で改行します。メモ帳やエディタが主な入力先の場合は Enter を選んでください。"
+                       Style="{StaticResource SubText}" Margin="0,2,0,6"/>
+            <ComboBox x:Name="NewlineCombo" SelectionChanged="NewlineCombo_SelectionChanged"/>
+
             <Separator Margin="0,16" Background="{StaticResource BorderBrush}"/>
 
             <!-- 定型文 -->

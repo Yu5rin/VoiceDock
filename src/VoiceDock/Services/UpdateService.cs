@@ -170,13 +170,13 @@ public sealed class UpdateService
     public async Task<string> DownloadAsync(UpdateInfo info, IProgress<double>? progress,
         CancellationToken ct = default)
     {
-        var dir = Path.Combine(Path.GetTempPath(), "VoiceDockUpdate");
-        Directory.CreateDirectory(dir);
-        var path = Path.Combine(dir, $"VoiceDock-{info.TagName}.exe");
+        Directory.CreateDirectory(TempDir);
+        var path = Path.Combine(TempDir, $"VoiceDock-{info.TagName}.exe");
 
-        using (var http = CreateClient())
-        using (var res = await http.GetAsync(info.DownloadUrl, HttpCompletionOption.ResponseHeadersRead, ct))
+        try
         {
+            using var http = CreateClient();
+            using var res = await http.GetAsync(info.DownloadUrl, HttpCompletionOption.ResponseHeadersRead, ct);
             res.EnsureSuccessStatusCode();
             long total = res.Content.Headers.ContentLength ?? info.SizeBytes;
 
@@ -193,13 +193,19 @@ public sealed class UpdateService
                 if (total > 0) progress?.Report((double)read / total);
             }
         }
+        catch
+        {
+            // 中断・失敗した場合、書きかけのファイルを残さない
+            TryDelete(path);
+            throw;
+        }
 
         if (info.Sha256 is { Length: > 0 } expected)
         {
             var actual = ComputeSha256(path);
             if (!string.Equals(actual, expected, StringComparison.OrdinalIgnoreCase))
             {
-                try { File.Delete(path); } catch { /* 後始末の失敗は無視 */ }
+                TryDelete(path);
                 throw new InvalidOperationException(
                     $"ダウンロードしたファイルの検証に失敗しました (SHA256 不一致)");
             }
@@ -269,6 +275,10 @@ public sealed class UpdateService
             File.Copy(downloadedExe, current, overwrite: true);
 
             Process.Start(new ProcessStartInfo(current) { UseShellExecute = true });
+
+            // 入れ替えが済んだので、ダウンロードした一時ファイル（数十 MB）は不要
+            TryDelete(downloadedExe);
+
             _log.Info("更新を適用し、新しいバージョンを起動しました");
             return true;
         }
@@ -295,22 +305,39 @@ public sealed class UpdateService
         }
     }
 
-    /// <summary>前回の更新で残った .old ファイルを削除する（起動時に呼ぶ）。</summary>
+    /// <summary>
+    /// 前回の更新で残ったファイルを削除する（起動時に呼ぶ）。
+    /// 対象は「入れ替え前の exe (.old)」と「ダウンロード用の一時フォルダ」。
+    /// 更新に失敗した場合や途中で中断した場合、数十 MB の一時ファイルが残るため、
+    /// 次の起動時に必ず片付ける。
+    /// </summary>
     public void CleanupOldFiles()
     {
         try
         {
             var current = Environment.ProcessPath;
-            if (string.IsNullOrEmpty(current)) return;
-            var backup = current + OldSuffix;
-            if (File.Exists(backup) && TryDelete(backup))
-                _log.Info("更新前のファイルを削除しました");
+            if (!string.IsNullOrEmpty(current))
+            {
+                var backup = current + OldSuffix;
+                if (File.Exists(backup) && TryDelete(backup))
+                    _log.Info("更新前のファイルを削除しました");
+            }
+
+            // 起動直後にダウンロード中ということはないため、まるごと削除してよい
+            if (Directory.Exists(TempDir))
+            {
+                Directory.Delete(TempDir, recursive: true);
+                _log.Info("更新用の一時ファイルを削除しました");
+            }
         }
         catch
         {
             // 掃除の失敗は無視（次回起動時に再試行される）
         }
     }
+
+    /// <summary>更新ファイルのダウンロード先。</summary>
+    private static string TempDir => Path.Combine(Path.GetTempPath(), "VoiceDockUpdate");
 
     private static bool TryDelete(string path)
     {

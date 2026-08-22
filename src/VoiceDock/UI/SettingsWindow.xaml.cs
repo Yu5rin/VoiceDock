@@ -75,12 +75,12 @@ public partial class SettingsWindow : Window
         SoundCheck.IsChecked = settings.Current.SoundFeedback;
         LocalRecognitionCheck.IsChecked = settings.Current.PreferLocalRecognition;
 
+        UpdateModeCombo.Items.Add("起動のたびに確認する（推奨）");
         UpdateModeCombo.Items.Add("起動時に確認する（1 日 1 回まで）");
-        UpdateModeCombo.Items.Add("起動のたびに確認する");
         UpdateModeCombo.Items.Add("自動では確認しない（手動のみ）");
         UpdateModeCombo.SelectedIndex = settings.Current.UpdateCheckMode switch
         {
-            UpdateCheckMode.EveryStartup => 1,
+            UpdateCheckMode.DailyOnStartup => 1,
             UpdateCheckMode.Manual => 2,
             _ => 0,
         };
@@ -183,9 +183,9 @@ public partial class SettingsWindow : Window
         if (_initializing) return;
         var mode = UpdateModeCombo.SelectedIndex switch
         {
-            1 => UpdateCheckMode.EveryStartup,
+            1 => UpdateCheckMode.DailyOnStartup,
             2 => UpdateCheckMode.Manual,
-            _ => UpdateCheckMode.DailyOnStartup,
+            _ => UpdateCheckMode.EveryStartup,
         };
         _settings.Update(s => s.UpdateCheckMode = mode);
     }

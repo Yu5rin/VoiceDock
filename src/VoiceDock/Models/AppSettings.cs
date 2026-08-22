@@ -23,9 +23,9 @@ public enum InputMethod
 /// <summary>更新を確認するタイミング。</summary>
 public enum UpdateCheckMode
 {
-    /// <summary>起動時に確認する。ただし前回の確認から 24 時間以上経っている場合のみ（既定）</summary>
+    /// <summary>起動時に確認する。ただし前回の確認から 24 時間以上経っている場合のみ</summary>
     DailyOnStartup,
-    /// <summary>起動のたびに毎回確認する</summary>
+    /// <summary>起動のたびに毎回確認する（既定）</summary>
     EveryStartup,
     /// <summary>自動では確認せず、手動で「更新を確認」したときだけ</summary>
     Manual,
@@ -122,7 +122,7 @@ public class AppSettings
     public bool FirstRunDone { get; set; }
 
     /// <summary>更新を確認するタイミング</summary>
-    public UpdateCheckMode UpdateCheckMode { get; set; } = UpdateCheckMode.DailyOnStartup;
+    public UpdateCheckMode UpdateCheckMode { get; set; } = UpdateCheckMode.EveryStartup;
 
     /// <summary>
     /// 更新の確認先（GitHub Releases API）。

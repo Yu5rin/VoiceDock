@@ -17,7 +17,7 @@
     <ApplicationIcon>app.ico</ApplicationIcon>
     <!-- Linux 等の非 Windows 環境でも win 向けビルドを可能にする -->
     <EnableWindowsTargeting>true</EnableWindowsTargeting>
-    <Version>0.7.0</Version>
+    <Version>0.7.1</Version>
     <Product>VoiceDock</Product>
     <Description>Web Speech API を用いた音声入力ツール</Description>
   </PropertyGroup>

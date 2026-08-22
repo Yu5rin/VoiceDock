@@ -18,11 +18,12 @@ public partial class SettingsWindow : Window
     private readonly Action _openDictionary;
     private readonly Action _openSnippets;
     private readonly Action _openAppRules;
+    private readonly Action _checkUpdate;
     private bool _initializing = true;
 
     public SettingsWindow(SettingsService settings,
         Func<HotkeySpec, bool> applyHotkey, Func<HotkeySpec, bool> applyUndoHotkey,
-        Action openDictionary, Action openSnippets, Action openAppRules)
+        Action openDictionary, Action openSnippets, Action openAppRules, Action checkUpdate)
     {
         InitializeComponent();
         AppTheme.ApplyToWindow(this);
@@ -32,6 +33,7 @@ public partial class SettingsWindow : Window
         _openDictionary = openDictionary;
         _openSnippets = openSnippets;
         _openAppRules = openAppRules;
+        _checkUpdate = checkUpdate;
 
         HotkeyBox.Text = settings.Current.Hotkey;
         UndoHotkeyBox.Text = settings.Current.UndoHotkey;
@@ -72,6 +74,19 @@ public partial class SettingsWindow : Window
         UndoCheck.IsChecked = settings.Current.UndoEnabled;
         SoundCheck.IsChecked = settings.Current.SoundFeedback;
         LocalRecognitionCheck.IsChecked = settings.Current.PreferLocalRecognition;
+
+        UpdateModeCombo.Items.Add("起動時に確認する（1 日 1 回まで）");
+        UpdateModeCombo.Items.Add("起動のたびに確認する");
+        UpdateModeCombo.Items.Add("自動では確認しない（手動のみ）");
+        UpdateModeCombo.SelectedIndex = settings.Current.UpdateCheckMode switch
+        {
+            UpdateCheckMode.EveryStartup => 1,
+            UpdateCheckMode.Manual => 2,
+            _ => 0,
+        };
+        // どこへ通信するのかが利用者から見えるようにする
+        UpdateUrlText.Text = $"更新の確認先: {settings.Current.UpdateApiUrl}\n" +
+                             "この確認と、更新ファイルのダウンロード以外に、外部との通信は行いません。";
 
         var version = typeof(SettingsWindow).Assembly.GetName().Version;
         VersionText.Text = $"VoiceDock v{version?.ToString(3) ?? "?"} — Web Speech API 音声入力ツール";
@@ -162,6 +177,20 @@ public partial class SettingsWindow : Window
             UndoHotkeyWarning.Visibility = Visibility.Visible;
         }
     }
+
+    private void UpdateModeCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_initializing) return;
+        var mode = UpdateModeCombo.SelectedIndex switch
+        {
+            1 => UpdateCheckMode.EveryStartup,
+            2 => UpdateCheckMode.Manual,
+            _ => UpdateCheckMode.DailyOnStartup,
+        };
+        _settings.Update(s => s.UpdateCheckMode = mode);
+    }
+
+    private void CheckUpdate_Click(object sender, RoutedEventArgs e) => _checkUpdate();
 
     private void OpenSnippets_Click(object sender, RoutedEventArgs e) => _openSnippets();
 

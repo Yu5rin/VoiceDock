@@ -18,6 +18,7 @@ public sealed class TrayIconController : IDisposable
     public event Action? DictionaryRequested;
     public event Action? SnippetRequested;
     public event Action? LogRequested;
+    public event Action? UpdateCheckRequested;
     public event Action? ExitRequested;
 
     public TrayIconController()
@@ -36,6 +37,7 @@ public sealed class TrayIconController : IDisposable
         menu.Items.Add(CreateItem("定型文", () => SnippetRequested?.Invoke()));
         menu.Items.Add(CreateItem("ログ表示", () => LogRequested?.Invoke()));
         menu.Items.Add(new ToolStripSeparator());
+        menu.Items.Add(CreateItem("更新を確認", () => UpdateCheckRequested?.Invoke()));
         menu.Items.Add(CreateItem("終了", () => ExitRequested?.Invoke()));
 
         _notifyIcon = new NotifyIcon

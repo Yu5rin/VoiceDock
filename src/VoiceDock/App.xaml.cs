@@ -15,6 +15,7 @@ public partial class App : Application
     private SettingsService? _settings;
     private DictionaryService? _dictionary;
     private SnippetService? _snippets;
+    private UpdateService? _updater;
     private SpeechBridgeServer? _bridge;
     private BrowserLauncher? _browser;
     private HotkeyManager? _hotkey;
@@ -28,6 +29,7 @@ public partial class App : Application
     private SnippetWindow? _snippetWindow;
     private AppRulesWindow? _appRulesWindow;
     private LogWindow? _logWindow;
+    private UpdateWindow? _updateWindow;
 
     protected override void OnStartup(StartupEventArgs e)
     {
@@ -64,7 +66,12 @@ public partial class App : Application
         _tray.DictionaryRequested += ShowDictionary;
         _tray.SnippetRequested += ShowSnippets;
         _tray.LogRequested += ShowLog;
+        _tray.UpdateCheckRequested += () => _ = CheckForUpdateAsync(manual: true);
         _tray.ExitRequested += ExitApplication;
+
+        // 前回の更新で残ったファイルを片付ける
+        _updater = new UpdateService(_log, _settings);
+        _updater.CleanupOldFiles();
 
         _overlay = new OverlayWindow();
 
@@ -162,6 +169,40 @@ public partial class App : Application
             _settings.Update(s => s.FirstRunDone = true);
             ToastWindow.Show($"VoiceDock へようこそ。テキスト入力欄にカーソルを置き、{_settings.Current.Hotkey} を押して話すと文字が入力されます。");
         }
+
+        // 更新の確認。通信が起動をブロックしないよう非同期で行う
+        if (_updater.ShouldCheckOnStartup())
+            _ = CheckForUpdateAsync(manual: false);
+    }
+
+    /// <summary>
+    /// 更新を確認し、新しい版があれば案内画面を出す。
+    /// 手動実行時は「最新です」「確認できませんでした」も通知する。
+    /// </summary>
+    private async Task CheckForUpdateAsync(bool manual)
+    {
+        if (_updater == null) return;
+
+        var info = await _updater.CheckForUpdateAsync();
+
+        await Dispatcher.BeginInvoke(() =>
+        {
+            if (info == null)
+            {
+                if (manual)
+                    ToastWindow.Show($"お使いのバージョン {UpdateService.CurrentVersion} は最新です。");
+                return;
+            }
+
+            if (_updateWindow is { IsLoaded: true })
+            {
+                _updateWindow.Activate();
+                return;
+            }
+            _updateWindow = new UpdateWindow(_updater, info, ExitApplication);
+            _updateWindow.Show();
+            _updateWindow.Activate();
+        });
     }
 
     /// <summary>設定画面からのホットキー変更。衝突時は元のホットキーへ復元し false を返す。</summary>
@@ -205,7 +246,7 @@ public partial class App : Application
             return;
         }
         _settingsWindow = new SettingsWindow(_settings, ApplyHotkey, ApplyUndoHotkey,
-            ShowDictionary, ShowSnippets, ShowAppRules);
+            ShowDictionary, ShowSnippets, ShowAppRules, () => _ = CheckForUpdateAsync(manual: true));
         _settingsWindow.Show();
         _settingsWindow.Activate();
     }

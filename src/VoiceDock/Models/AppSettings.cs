@@ -20,6 +20,17 @@ public enum InputMethod
     Clipboard,
 }
 
+/// <summary>更新を確認するタイミング。</summary>
+public enum UpdateCheckMode
+{
+    /// <summary>起動時に確認する。ただし前回の確認から 24 時間以上経っている場合のみ（既定）</summary>
+    DailyOnStartup,
+    /// <summary>起動のたびに毎回確認する</summary>
+    EveryStartup,
+    /// <summary>自動では確認せず、手動で「更新を確認」したときだけ</summary>
+    Manual,
+}
+
 /// <summary>改行の送出方法。</summary>
 public enum NewlineMode
 {
@@ -109,6 +120,19 @@ public class AppSettings
 
     /// <summary>初回起動ガイドを表示済みかどうか</summary>
     public bool FirstRunDone { get; set; }
+
+    /// <summary>更新を確認するタイミング</summary>
+    public UpdateCheckMode UpdateCheckMode { get; set; } = UpdateCheckMode.DailyOnStartup;
+
+    /// <summary>
+    /// 更新の確認先（GitHub Releases API）。
+    /// どこへ通信するのかが利用者から見えるよう、また配布先を移した際に設定変更だけで
+    /// 済むよう、コードに直書きせず設定ファイルに持たせている。
+    /// </summary>
+    public string UpdateApiUrl { get; set; } = "https://api.github.com/repos/Yu5rin/VoiceDock/releases/latest";
+
+    /// <summary>前回、更新を確認した日時 (UTC)。未確認なら null</summary>
+    public DateTime? LastUpdateCheckUtc { get; set; }
 
     public AppSettings Clone()
     {

@@ -49,18 +49,36 @@ public static class SafeFile
     /// どちらも読めない場合は null。
     /// </summary>
     /// <param name="validate">
-    /// 内容が正しく解釈できるかの判定（JSON として解析できるか等）。
-    /// false を返した場合は破損とみなして .bak を試す。
+    /// 内容が正しく解釈できるかの判定。JSON として解析できるかだけでなく、
+    /// 実際に目的の型へ変換できるかまで確かめること。ここが緩いと、
+    /// 「JSON としては正しいが中身が壊れている」ファイルで .bak への切り替えが働かない。
     /// </param>
     public static string? ReadAllText(string path, Func<string, bool>? validate = null)
+        => ReadAllText(path, validate, out _);
+
+    /// <param name="fromBackup">.bak から復帰した場合 true。</param>
+    /// <inheritdoc cref="ReadAllText(string, Func{string, bool})"/>
+    public static string? ReadAllText(string path, Func<string, bool>? validate, out bool fromBackup)
     {
-        foreach (var candidate in new[] { path, path + BackupSuffix })
+        fromBackup = false;
+        var backup = path + BackupSuffix;
+
+        foreach (var candidate in new[] { path, backup })
         {
             try
             {
                 if (!File.Exists(candidate)) continue;
                 var text = File.ReadAllText(candidate);
                 if (validate != null && !validate(text)) continue;
+
+                if (candidate == backup)
+                {
+                    fromBackup = true;
+                    // 壊れた本体をそのままにしておくと、次の保存で .bak が
+                    // 壊れた内容に置き換わり、無事だった控えを失ってしまう。
+                    // 復帰した内容をすぐ本体へ書き戻して、両方を正常な状態に揃える。
+                    TryRestore(backup, path);
+                }
                 return text;
             }
             catch
@@ -71,17 +89,16 @@ public static class SafeFile
         return null;
     }
 
-    /// <summary>本体が壊れていて .bak から復帰したかどうかを判定する（通知用）。</summary>
-    public static bool IsBackupUsable(string path, Func<string, bool> validate)
+    /// <summary>.bak の内容を本体へ書き戻す（失敗しても読み込み自体は成功扱いにする）。</summary>
+    private static void TryRestore(string backup, string path)
     {
         try
         {
-            var backup = path + BackupSuffix;
-            return File.Exists(backup) && validate(File.ReadAllText(backup));
+            File.Copy(backup, path, overwrite: true);
         }
         catch
         {
-            return false;
+            // 書き戻せなくても、読み込んだ内容は使える
         }
     }
 }

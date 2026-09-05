@@ -17,7 +17,7 @@
 
         <TextBlock Grid.Row="0" Text="辞書管理" FontSize="18" FontWeight="Bold"/>
         <TextBlock Grid.Row="1" Style="{StaticResource SubText}" Margin="0,4,0,10"
-                   Text="誤認識語 → 正しい語 の対応を登録します。登録単語は認識ヒント(initial_prompt)にも使われます。Excel から 2 列のセル範囲をコピーして、この表に Ctrl+V で貼り付けできます。"/>
+                   Text="誤認識語 → 正しい語 の対応を登録します。認識したあとの文字列を置き換える仕組みのため、認識そのものの精度は変わりません。Excel から 2 列のセル範囲をコピーして、この表に Ctrl+V で貼り付けできます。"/>
 
         <!-- 大量登録を想定した 2 列テーブル形式 -->
         <Grid Grid.Row="2">

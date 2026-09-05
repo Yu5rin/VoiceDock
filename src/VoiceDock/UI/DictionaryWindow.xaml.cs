@@ -36,7 +36,9 @@ public partial class DictionaryWindow : Window
 
     private void Grid_PreviewKeyDown(object sender, KeyEventArgs e)
     {
-        if (e.Key == Key.V && Keyboard.Modifiers == ModifierKeys.Control)
+        // セルを編集している最中の Ctrl+V は、そのセルへの通常の貼り付けとして扱う。
+        // ここで横取りすると、セルの一部だけ直したいときに行がまるごと増えてしまう。
+        if (e.Key == Key.V && Keyboard.Modifiers == ModifierKeys.Control && !IsEditing())
         {
             e.Handled = true;
             PasteFromClipboard();

@@ -31,13 +31,36 @@ public readonly record struct HotkeySpec(ModifierKeys Modifiers, Key Key)
                 case "windows":
                     modifiers |= ModifierKeys.Windows; break;
                 default:
-                    if (!Enum.TryParse(part, ignoreCase: true, out key)) return false;
+                    if (!TryParseKey(part, out key)) return false;
                     break;
             }
         }
         if (key == Key.None) return false;
         spec = new HotkeySpec(modifiers, key);
         return true;
+    }
+
+    /// <summary>
+    /// キー名を解釈する。
+    ///
+    /// Enum.TryParse は "1" のような数字を「列挙体の値 1」として受け付けてしまい、
+    /// Ctrl+1 が Ctrl+Cancel になってしまう。数字は D1 などのキー名へ読み替え、
+    /// 数値そのものは受け付けない。
+    /// </summary>
+    private static bool TryParseKey(string part, out Key key)
+    {
+        key = Key.None;
+        if (part.Length == 0) return false;
+
+        // "1" → "D1"、"Num1" のような表記も拾う
+        if (part.Length == 1 && part[0] is >= '0' and <= '9')
+            part = "D" + part;
+        else if (int.TryParse(part, out _))
+            return false;
+
+        return Enum.TryParse(part, ignoreCase: true, out key)
+               && Enum.IsDefined(typeof(Key), key)
+               && key != Key.None;
     }
 
     public override string ToString()

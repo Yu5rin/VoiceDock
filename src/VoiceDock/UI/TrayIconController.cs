@@ -5,7 +5,7 @@ namespace VoiceDock.UI;
 
 /// <summary>
 /// タスクトレイ常駐アイコン。状態に応じて色を変え、
-/// 右クリックメニュー（音声入力 / 設定 / 辞書管理 / 定型文 / ログ / 更新 / 終了）を提供する。
+/// 右クリックメニュー（音声入力 / 設定 / 辞書管理 / 定型文 / ログ / 認識エンジンの再起動 / 更新 / 終了）を提供する。
 /// </summary>
 public sealed class TrayIconController : IDisposable
 {
@@ -19,6 +19,7 @@ public sealed class TrayIconController : IDisposable
     public event Action? DictionaryRequested;
     public event Action? SnippetRequested;
     public event Action? LogRequested;
+    public event Action? RestartEngineRequested;
     public event Action? UpdateCheckRequested;
     public event Action? ExitRequested;
 
@@ -37,6 +38,8 @@ public sealed class TrayIconController : IDisposable
         menu.Items.Add(CreateItem("辞書管理", () => DictionaryRequested?.Invoke()));
         menu.Items.Add(CreateItem("定型文", () => SnippetRequested?.Invoke()));
         menu.Items.Add(CreateItem("ログ表示", () => LogRequested?.Invoke()));
+        // ブラウザが落ちたまま戻らないときに、アプリを再起動せず立て直せるようにする
+        menu.Items.Add(CreateItem("認識エンジンを再起動", () => RestartEngineRequested?.Invoke()));
         menu.Items.Add(new ToolStripSeparator());
         _updateItem = CreateItem("更新を確認", () => UpdateCheckRequested?.Invoke());
         menu.Items.Add(_updateItem);

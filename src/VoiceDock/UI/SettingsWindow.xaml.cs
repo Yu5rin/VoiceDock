@@ -19,11 +19,13 @@ public partial class SettingsWindow : Window
     private readonly Action _openSnippets;
     private readonly Action _openAppRules;
     private readonly Action _checkUpdate;
+    private readonly Action _restartBrowser;
     private bool _initializing = true;
 
     public SettingsWindow(SettingsService settings,
         Func<HotkeySpec, bool> applyHotkey, Func<HotkeySpec, bool> applyUndoHotkey,
-        Action openDictionary, Action openSnippets, Action openAppRules, Action checkUpdate)
+        Action openDictionary, Action openSnippets, Action openAppRules, Action checkUpdate,
+        Action restartBrowser)
     {
         InitializeComponent();
         AppTheme.ApplyToWindow(this);
@@ -34,13 +36,14 @@ public partial class SettingsWindow : Window
         _openSnippets = openSnippets;
         _openAppRules = openAppRules;
         _checkUpdate = checkUpdate;
+        _restartBrowser = restartBrowser;
 
         HotkeyBox.Text = settings.Current.Hotkey;
         UndoHotkeyBox.Text = settings.Current.UndoHotkey;
         StartupCheck.IsChecked = settings.Current.StartupEnabled;
 
         HotkeyModeCombo.Items.Add("押すたびに開始/停止（トグル）");
-        HotkeyModeCombo.Items.Add("押している間だけ録音");
+        HotkeyModeCombo.Items.Add("押している間だけ音声入力（押しっぱなし）");
         HotkeyModeCombo.SelectedIndex = settings.Current.HotkeyMode == HotkeyMode.PushToTalk ? 1 : 0;
 
         NewlineCombo.Items.Add("Shift+Enter（推奨・大半のアプリで改行）");
@@ -105,7 +108,8 @@ public partial class SettingsWindow : Window
             _ => BrowserChoice.Auto,
         };
         _settings.Update(s => s.Browser = choice);
-        ToastWindow.Show("認識用ブラウザの変更は、VoiceDock を再起動すると反映されます。");
+        // アプリを再起動させずにその場で切り替える
+        _restartBrowser();
     }
 
     private void InputMethodCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
@@ -154,7 +158,7 @@ public partial class SettingsWindow : Window
     {
         e.Handled = true;
 
-        var key = e.Key == Key.System ? e.SystemKey : e.Key;
+        var key = ResolveKey(e);
         if (key is Key.LeftCtrl or Key.RightCtrl or Key.LeftAlt or Key.RightAlt
             or Key.LeftShift or Key.RightShift or Key.LWin or Key.RWin)
             return;
@@ -202,7 +206,7 @@ public partial class SettingsWindow : Window
         if (answer != MessageBoxResult.OK) return;
 
         _settings.ResetToDefaults();
-        ToastWindow.Show("設定を初期状態に戻しました。ホットキーなど一部はアプリの再起動で反映されます。");
+        ToastWindow.Show("設定を初期状態に戻しました。");
         Close();
     }
 
@@ -214,7 +218,7 @@ public partial class SettingsWindow : Window
     {
         e.Handled = true;
 
-        var key = e.Key == Key.System ? e.SystemKey : e.Key;
+        var key = ResolveKey(e);
         // 修飾キー単独は確定しない
         if (key is Key.LeftCtrl or Key.RightCtrl or Key.LeftAlt or Key.RightAlt
             or Key.LeftShift or Key.RightShift or Key.LWin or Key.RWin)
@@ -239,6 +243,18 @@ public partial class SettingsWindow : Window
             ShowHotkeyWarning($"{spec} は他のアプリと衝突しているため登録できませんでした。別のキーを指定してください。");
         }
     }
+
+    /// <summary>
+    /// 押されたキーを取り出す。Alt との組み合わせは SystemKey、
+    /// IME がオンのときは ImeProcessedKey に入るため、そのまま e.Key を見ると
+    /// 「Ctrl+ImeProcessed」のような意味のない指定になってしまう。
+    /// </summary>
+    private static Key ResolveKey(KeyEventArgs e) => e.Key switch
+    {
+        Key.System => e.SystemKey,
+        Key.ImeProcessed => e.ImeProcessedKey,
+        _ => e.Key,
+    };
 
     private void ShowHotkeyWarning(string message)
     {

@@ -26,6 +26,28 @@ public sealed class BrowserLauncher : IDisposable
     /// <summary>再起動の上限に達したかどうか（呼び出し側が監視を止めるために見る）。</summary>
     public bool GaveUp => _relaunchAttempts >= MaxRelaunchAttempts;
 
+    /// <summary>
+    /// ブラウザが実際に使える状態になったことを通知する（認識ブリッジへ接続できた時点）。
+    /// 単に起動できただけでは正常とみなさない。
+    /// </summary>
+    public void NotifyHealthy() => _relaunchAttempts = 0;
+
+    /// <summary>設定変更などで、諦めた状態からやり直せるようにする。</summary>
+    public void ResetRelaunchAttempts() => _relaunchAttempts = 0;
+
+    /// <summary>
+    /// 使用ブラウザの設定を変えたときなどに、今のブラウザを終了して起動し直す。
+    /// 再起動を諦めた状態からでも復帰できるよう、失敗回数はリセットする。
+    /// </summary>
+    public bool Restart()
+    {
+        _relaunchAttempts = 0;
+        if (_urlFactory == null) return false;
+        KillCurrent();
+        _log.Info("設定の変更にあわせて認識用ブラウザを起動し直します");
+        return Launch(_urlFactory);
+    }
+
     /// <summary>実際に起動したブラウザの表示名（未起動なら null）。</summary>
     public string? LaunchedBrowserName { get; private set; }
 
@@ -51,20 +73,26 @@ public sealed class BrowserLauncher : IDisposable
         if (_urlFactory == null) return false;
         if (GaveUp) return false;
         _relaunchAttempts++;
-        try
-        {
-            if (_process is { HasExited: false })
-                _process.Kill(entireProcessTree: true);
-        }
-        catch { /* 終了失敗は無視して再起動を試みる */ }
-        _process?.Dispose();
-        _process = null;
+        KillCurrent();
         _log.Warn($"認識用ブラウザが停止していたため再起動します（{_relaunchAttempts}/{MaxRelaunchAttempts} 回目）");
         // 認識ページのトークンは使い捨てのため、再起動時は新しい URL を発行する
         bool ok = Launch(_urlFactory);
         if (!ok && GaveUp)
             _log.Error("認識用ブラウザを繰り返し起動できなかったため、自動再起動を停止しました");
         return ok;
+    }
+
+    /// <summary>今起動しているブラウザを終了させる。</summary>
+    private void KillCurrent()
+    {
+        try
+        {
+            if (_process is { HasExited: false })
+                _process.Kill(entireProcessTree: true);
+        }
+        catch { /* 終了失敗は無視して起動を試みる */ }
+        _process?.Dispose();
+        _process = null;
     }
 
     /// <summary>設定に応じたブラウザを起動して認識ページを開く。起動できたら true。</summary>
@@ -116,9 +144,11 @@ public sealed class BrowserLauncher : IDisposable
             _process = Process.Start(psi);
             if (_process != null)
             {
-                _relaunchAttempts = 0;
+                // ここでカウンタを戻すと、「起動はするがすぐ落ちる」状態のときに
+                // 毎回リセットされ、上限が働かないまま永久に再起動を繰り返してしまう。
+                // 実際に認識ブリッジへ接続できた時点（NotifyHealthy）で戻す。
                 // 異常終了時に取り残されたブラウザを次回起動で片付けられるよう PID を残す
-                SaveLaunchedPid(_process.Id);
+                SaveLaunchedPid(_process);
             }
             _log.Info($"認識用ブラウザを起動しました: {name} ({Path.GetFileName(exe)})");
             return _process != null;
@@ -209,6 +239,10 @@ public sealed class BrowserLauncher : IDisposable
     /// 前回の実行で取り残された認識用ブラウザを終了させる。
     /// VoiceDock がクラッシュすると Dispose が走らず、画面外のブラウザが
     /// マイクを掴んだまま残り続けるため、起動時に片付ける。
+    ///
+    /// PID は OS が使い回すため、PID だけで判断すると利用者が普段使っている
+    /// ブラウザをタブごと巻き添えで終了させてしまう。記録した「起動時刻」と
+    /// 一致することを確かめ、確実に自分が起動したプロセスだけを終了する。
     /// </summary>
     public void KillOrphanedBrowser()
     {
@@ -217,14 +251,25 @@ public sealed class BrowserLauncher : IDisposable
             if (!File.Exists(PidFile)) return;
             var text = File.ReadAllText(PidFile).Trim();
             File.Delete(PidFile);
-            if (!int.TryParse(text, out int pid)) return;
+
+            // 形式: "<pid>|<開始時刻のTicks>"
+            var parts = text.Split('|');
+            if (parts.Length != 2) return;
+            if (!int.TryParse(parts[0], out int pid)) return;
+            if (!long.TryParse(parts[1], out long startedTicks)) return;
 
             using var proc = Process.GetProcessById(pid);
-            // PID は使い回されるため、ブラウザ以外を誤って終了させないよう名前で確認する
+
+            // 名前と開始時刻の両方が一致した場合だけ、自分が起動したものと判断する
             var name = proc.ProcessName;
             if (!name.Equals("msedge", StringComparison.OrdinalIgnoreCase) &&
                 !name.Equals("chrome", StringComparison.OrdinalIgnoreCase))
                 return;
+            if (proc.StartTime.Ticks != startedTicks)
+            {
+                // PID が別のプロセスに再利用されている（利用者のブラウザ等）
+                return;
+            }
 
             proc.Kill(entireProcessTree: true);
             _log.Info("前回の実行で残っていた認識用ブラウザを終了しました");
@@ -237,12 +282,13 @@ public sealed class BrowserLauncher : IDisposable
 
     private static string PidFile => Path.Combine(AppPaths.Root, "browser.pid");
 
-    private void SaveLaunchedPid(int pid)
+    private void SaveLaunchedPid(Process proc)
     {
         try
         {
             AppPaths.EnsureDirectories();
-            File.WriteAllText(PidFile, pid.ToString());
+            // PID の使い回しを見分けるため、開始時刻も一緒に残す
+            File.WriteAllText(PidFile, $"{proc.Id}|{proc.StartTime.Ticks}");
         }
         catch
         {

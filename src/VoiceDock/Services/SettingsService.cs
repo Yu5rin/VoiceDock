@@ -28,11 +28,20 @@ public sealed class SettingsService
 
     public AppSettings Current { get; private set; } = new();
 
-    /// <summary>読み込み時に破損が見つかり、バックアップから復帰した場合 true。</summary>
+    /// <summary>読み込み時に本体が壊れていて、控え (.bak) から復帰できた場合 true。</summary>
     public bool RecoveredFromBackup { get; private set; }
+
+    /// <summary>本体も控えも読めず、初期設定で起動した場合 true（設定が失われた状態）。</summary>
+    public bool ResetBecauseUnreadable { get; private set; }
 
     /// <summary>設定変更時に発火（引数は変更後の設定）</summary>
     public event Action<AppSettings>? Changed;
+
+    /// <summary>保存に失敗したときに発火（利用者へ知らせるため）。引数は理由の説明。</summary>
+    public event Action<string>? SaveFailed;
+
+    /// <summary>初期化したときに発火。ホットキー等を登録し直すために使う。</summary>
+    public event Action? Reset;
 
     public SettingsService(LogService log)
     {
@@ -43,18 +52,24 @@ public sealed class SettingsService
     {
         lock (_sync)
         {
-            var json = SafeFile.ReadAllText(AppPaths.SettingsFile, IsValidJson);
+            // JSON として読めるかだけでなく、AppSettings へ変換できるかまで確かめる。
+            // 型が合わない値が混じっている場合も「壊れている」と判定して .bak へ切り替える。
+            var json = SafeFile.ReadAllText(AppPaths.SettingsFile, CanDeserialize, out bool fromBackup);
             if (json == null)
             {
-                // ファイルが無い（初回起動）場合と、本体・バックアップとも壊れている場合がある
+                // ファイルが無い（初回起動）場合と、本体・控えとも壊れている場合がある
                 if (System.IO.File.Exists(AppPaths.SettingsFile))
                 {
                     _log.Error("設定ファイルが読み取れなかったため、初期設定で起動します");
-                    RecoveredFromBackup = true;
+                    ResetBecauseUnreadable = true;
                 }
                 Current = new AppSettings();
                 return;
             }
+
+            RecoveredFromBackup = fromBackup;
+            if (fromBackup)
+                _log.Warn("設定ファイルが壊れていたため、バックアップから復帰しました");
 
             try
             {
@@ -63,9 +78,11 @@ public sealed class SettingsService
             }
             catch (Exception ex)
             {
+                // CanDeserialize を通っているので通常ここには来ない（保険）
                 _log.Error($"設定ファイルの解釈に失敗したため、初期設定で起動します: {ex.Message}");
                 Current = new AppSettings();
-                RecoveredFromBackup = true;
+                RecoveredFromBackup = false;
+                ResetBecauseUnreadable = true;
             }
         }
     }
@@ -91,11 +108,13 @@ public sealed class SettingsService
         lock (_sync)
         {
             Current = new AppSettings();
+            Normalize(Current);
             Save();
             snapshot = Current;
         }
         _log.Info("設定を初期状態に戻しました");
         Changed?.Invoke(snapshot);
+        Reset?.Invoke();
     }
 
     /// <summary>
@@ -110,6 +129,19 @@ public sealed class SettingsService
             _log.Warn($"更新の確認先が許可されていない URL のため、既定値に戻しました: {s.UpdateApiUrl}");
             s.UpdateApiUrl = new AppSettings().UpdateApiUrl;
         }
+
+        // JSON から復元した辞書は、初期化子で指定した「大文字小文字を区別しない」比較を
+        // 引き継がない。そのままだと Notepad と notepad が別扱いになり、
+        // アプリ別の入力方式が効かなくなるため、毎回作り直す。
+        var map = s.AppInputMethods;
+        if (map is null)
+        {
+            s.AppInputMethods = new Dictionary<string, InputMethod>(StringComparer.OrdinalIgnoreCase);
+        }
+        else if (!ReferenceEquals(map.Comparer, StringComparer.OrdinalIgnoreCase))
+        {
+            s.AppInputMethods = new Dictionary<string, InputMethod>(map, StringComparer.OrdinalIgnoreCase);
+        }
     }
 
     /// <summary>更新の確認先として許可する URL か（HTTPS かつ GitHub のみ）。</summary>
@@ -119,12 +151,12 @@ public sealed class SettingsService
         (uri.Host.Equals("api.github.com", StringComparison.OrdinalIgnoreCase) ||
          uri.Host.Equals("github.com", StringComparison.OrdinalIgnoreCase));
 
-    private static bool IsValidJson(string text)
+    /// <summary>内容が AppSettings として読み込めるか（破損判定に使う）。</summary>
+    private static bool CanDeserialize(string text)
     {
         try
         {
-            using var _ = JsonDocument.Parse(text);
-            return true;
+            return JsonSerializer.Deserialize<AppSettings>(text, JsonOptions) != null;
         }
         catch
         {
@@ -141,7 +173,9 @@ public sealed class SettingsService
         }
         catch (Exception ex)
         {
+            // 黙って失敗すると、利用者は変更が保存されたと思い込んでしまう
             _log.Error($"設定ファイルの保存に失敗しました: {ex.Message}");
+            SaveFailed?.Invoke(UserMessage.Describe(ex));
         }
     }
 }

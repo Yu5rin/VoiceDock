@@ -27,9 +27,19 @@ public sealed class SnippetService
     private List<SnippetEntry> _entries = new();
     private bool _loadFailed;
 
-    private static bool IsValidJson(string text)
+    /// <summary>読み込みに失敗して内容を復元できなかった場合 true。</summary>
+    public bool LoadFailed => _loadFailed;
+
+    /// <summary>本体が壊れていて、控え (.bak) から復帰した場合 true。</summary>
+    public bool RecoveredFromBackup { get; private set; }
+
+    /// <summary>保存に失敗したときに発火（引数は理由の説明）。</summary>
+    public event Action<string>? SaveFailed;
+
+    /// <summary>内容が定型文として読み込めるか（破損判定に使う）。</summary>
+    private static bool CanDeserialize(string text)
     {
-        try { using var _ = JsonDocument.Parse(text); return true; }
+        try { return JsonSerializer.Deserialize<List<SnippetEntry>>(text, JsonOptions) != null; }
         catch { return false; }
     }
 
@@ -52,9 +62,12 @@ public sealed class SnippetService
         try
         {
             // 破損時はバックアップから復帰する
-            var json = SafeFile.ReadAllText(AppPaths.SnippetsFile, IsValidJson);
+            var json = SafeFile.ReadAllText(AppPaths.SnippetsFile, CanDeserialize, out bool fromBackup);
             if (json != null)
             {
+                RecoveredFromBackup = fromBackup;
+                if (fromBackup)
+                    _log.Warn("定型文ファイルが壊れていたため、バックアップから復帰しました");
                 lock (_sync)
                     _entries = JsonSerializer.Deserialize<List<SnippetEntry>>(json, JsonOptions) ?? new();
             }
@@ -67,6 +80,7 @@ public sealed class SnippetService
         catch (Exception ex)
         {
             _log.Error($"定型文ファイルの読み込みに失敗しました: {ex.Message}");
+            _loadFailed = true;
         }
     }
 
@@ -114,6 +128,7 @@ public sealed class SnippetService
         catch (Exception ex)
         {
             _log.Error($"定型文ファイルの保存に失敗しました: {ex.Message}");
+            SaveFailed?.Invoke(UserMessage.Describe(ex));
         }
     }
 }

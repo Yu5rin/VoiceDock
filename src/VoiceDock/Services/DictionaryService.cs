@@ -32,9 +32,16 @@ public sealed class DictionaryService
     /// <summary>読み込みに失敗して内容を復元できなかった場合 true。</summary>
     public bool LoadFailed => _loadFailed;
 
-    private static bool IsValidJson(string text)
+    /// <summary>本体が壊れていて、控え (.bak) から復帰した場合 true。</summary>
+    public bool RecoveredFromBackup { get; private set; }
+
+    /// <summary>保存に失敗したときに発火（引数は理由の説明）。</summary>
+    public event Action<string>? SaveFailed;
+
+    /// <summary>内容が辞書として読み込めるか（破損判定に使う）。</summary>
+    private static bool CanDeserialize(string text)
     {
-        try { using var _ = JsonDocument.Parse(text); return true; }
+        try { return JsonSerializer.Deserialize<List<DictionaryEntry>>(text, JsonOptions) != null; }
         catch { return false; }
     }
 
@@ -53,9 +60,12 @@ public sealed class DictionaryService
         try
         {
             // 破損時はバックアップから復帰する（辞書は再作成の手間が大きいため）
-            var json = SafeFile.ReadAllText(AppPaths.DictionaryFile, IsValidJson);
+            var json = SafeFile.ReadAllText(AppPaths.DictionaryFile, CanDeserialize, out bool fromBackup);
             if (json != null)
             {
+                RecoveredFromBackup = fromBackup;
+                if (fromBackup)
+                    _log.Warn("辞書ファイルが壊れていたため、バックアップから復帰しました");
                 lock (_sync)
                     _entries = JsonSerializer.Deserialize<List<DictionaryEntry>>(json, JsonOptions) ?? new();
             }
@@ -67,7 +77,9 @@ public sealed class DictionaryService
         }
         catch (Exception ex)
         {
+            // 読めなかった内容を空で上書きしないよう、失敗として記録する
             _log.Error($"辞書ファイルの読み込みに失敗しました: {ex.Message}");
+            _loadFailed = true;
         }
     }
 
@@ -99,6 +111,7 @@ public sealed class DictionaryService
         catch (Exception ex)
         {
             _log.Error($"辞書ファイルの保存に失敗しました: {ex.Message}");
+            SaveFailed?.Invoke(UserMessage.Describe(ex));
         }
     }
 

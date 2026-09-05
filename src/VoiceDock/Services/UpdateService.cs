@@ -86,7 +86,7 @@ public sealed class UpdateService
         if (Interlocked.Exchange(ref _checking, 1) != 0) return null;
         try
         {
-            using var http = CreateClient();
+            using var http = CreateClient(CheckTimeout);
             var url = _settings.Current.UpdateApiUrl;
             if (string.IsNullOrWhiteSpace(url))
             {
@@ -159,6 +159,8 @@ public sealed class UpdateService
 
             var downloadUrl = asset.TryGetProperty("browser_download_url", out var u) ? u.GetString() : null;
             if (string.IsNullOrEmpty(downloadUrl)) continue;
+            // 応答が差し替えられた場合に、意図しない配布元から exe を取ってこないようにする
+            if (!IsAllowedDownloadUrl(downloadUrl)) continue;
 
             long size = asset.TryGetProperty("size", out var sz) && sz.TryGetInt64(out var s) ? s : 0;
 
@@ -178,6 +180,22 @@ public sealed class UpdateService
         return null;
     }
 
+    /// <summary>
+    /// 更新ファイルの取得先として許可する URL か。
+    /// HTTPS かつ GitHub のリリース配信ホストに限る。exe を取得して実行する処理のため、
+    /// リリース JSON に書かれた URL をそのまま信用しない。
+    /// </summary>
+    public static bool IsAllowedDownloadUrl(string? url)
+    {
+        if (!Uri.TryCreate(url, UriKind.Absolute, out var uri)) return false;
+        if (uri.Scheme != Uri.UriSchemeHttps) return false;
+        var host = uri.Host;
+        return host.Equals("github.com", StringComparison.OrdinalIgnoreCase)
+               || host.Equals("api.github.com", StringComparison.OrdinalIgnoreCase)
+               || host.Equals("objects.githubusercontent.com", StringComparison.OrdinalIgnoreCase)
+               || host.EndsWith(".githubusercontent.com", StringComparison.OrdinalIgnoreCase);
+    }
+
     /// <summary>"v0.6.2" のようなタグ名からバージョンを取り出す。</summary>
     private static bool TryParseVersion(string tag, out Version version)
     {
@@ -195,12 +213,15 @@ public sealed class UpdateService
     public async Task<string> DownloadAsync(UpdateInfo info, IProgress<double>? progress,
         CancellationToken ct = default)
     {
+        if (!IsAllowedDownloadUrl(info.DownloadUrl))
+            throw new InvalidOperationException("更新ファイルの取得先が許可されていない URL です。");
+
         Directory.CreateDirectory(TempDir);
         var path = Path.Combine(TempDir, $"VoiceDock-{info.TagName}.exe");
 
         try
         {
-            using var http = CreateClient();
+            using var http = CreateClient(DownloadTimeout);
             using var res = await http.GetAsync(info.DownloadUrl, HttpCompletionOption.ResponseHeadersRead, ct);
             res.EnsureSuccessStatusCode();
             long total = res.Content.Headers.ContentLength ?? info.SizeBytes;
@@ -227,7 +248,8 @@ public sealed class UpdateService
 
         if (info.Sha256 is { Length: > 0 } expected)
         {
-            var actual = ComputeSha256(path);
+            // 数十 MB のハッシュ計算。UI スレッドで行うと画面が固まる
+            var actual = await Task.Run(() => ComputeSha256(path), ct);
             if (!string.Equals(actual, expected, StringComparison.OrdinalIgnoreCase))
             {
                 TryDelete(path);
@@ -381,9 +403,15 @@ public sealed class UpdateService
         }
     }
 
-    private static HttpClient CreateClient()
+    /// <summary>更新の確認（JSON 1 本）のタイムアウト。長すぎると起動直後に固まって見える。</summary>
+    private static readonly TimeSpan CheckTimeout = TimeSpan.FromSeconds(15);
+
+    /// <summary>更新ファイル（数十 MB）のダウンロードのタイムアウト。</summary>
+    private static readonly TimeSpan DownloadTimeout = TimeSpan.FromMinutes(10);
+
+    private static HttpClient CreateClient(TimeSpan timeout)
     {
-        var http = new HttpClient { Timeout = TimeSpan.FromMinutes(10) };
+        var http = new HttpClient { Timeout = timeout };
         // GitHub API は User-Agent を要求する
         http.DefaultRequestHeaders.UserAgent.Add(
             new ProductInfoHeaderValue("VoiceDock", CurrentVersion.ToString()));

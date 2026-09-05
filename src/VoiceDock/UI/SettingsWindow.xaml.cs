@@ -19,11 +19,13 @@ public partial class SettingsWindow : Window
     private readonly Action _openSnippets;
     private readonly Action _openAppRules;
     private readonly Action _checkUpdate;
+    private readonly Action _restartBrowser;
     private bool _initializing = true;
 
     public SettingsWindow(SettingsService settings,
         Func<HotkeySpec, bool> applyHotkey, Func<HotkeySpec, bool> applyUndoHotkey,
-        Action openDictionary, Action openSnippets, Action openAppRules, Action checkUpdate)
+        Action openDictionary, Action openSnippets, Action openAppRules, Action checkUpdate,
+        Action restartBrowser)
     {
         InitializeComponent();
         AppTheme.ApplyToWindow(this);
@@ -34,6 +36,7 @@ public partial class SettingsWindow : Window
         _openSnippets = openSnippets;
         _openAppRules = openAppRules;
         _checkUpdate = checkUpdate;
+        _restartBrowser = restartBrowser;
 
         HotkeyBox.Text = settings.Current.Hotkey;
         UndoHotkeyBox.Text = settings.Current.UndoHotkey;
@@ -105,7 +108,8 @@ public partial class SettingsWindow : Window
             _ => BrowserChoice.Auto,
         };
         _settings.Update(s => s.Browser = choice);
-        ToastWindow.Show("認識用ブラウザの変更は、VoiceDock を再起動すると反映されます。");
+        // アプリを再起動させずにその場で切り替える
+        _restartBrowser();
     }
 
     private void InputMethodCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
@@ -202,7 +206,7 @@ public partial class SettingsWindow : Window
         if (answer != MessageBoxResult.OK) return;
 
         _settings.ResetToDefaults();
-        ToastWindow.Show("設定を初期状態に戻しました。ホットキーなど一部はアプリの再起動で反映されます。");
+        ToastWindow.Show("設定を初期状態に戻しました。");
         Close();
     }
 

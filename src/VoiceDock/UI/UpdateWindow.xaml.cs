@@ -16,7 +16,18 @@ public partial class UpdateWindow : Window
     private readonly UpdateInfo _info;
     private readonly SettingsService _settings;
     private readonly Action _shutdown;
+
+    /// <summary>ダウンロード中かどうか（多重実行と、閉じたときの中断判定に使う）。</summary>
     private bool _working;
+
+    /// <summary>exe の入れ替え中かどうか。この間は閉じさせない。</summary>
+    private bool _applying;
+
+    /// <summary>ダウンロードの中断用。</summary>
+    private CancellationTokenSource? _cts;
+
+    /// <summary>「この版はスキップ」が押されたかどうか（呼び出し元が案内を取り下げるために見る）。</summary>
+    public bool Skipped { get; private set; }
 
     public UpdateWindow(UpdateService updater, UpdateInfo info, SettingsService settings, Action shutdown)
     {
@@ -44,13 +55,12 @@ public partial class UpdateWindow : Window
 
     private async void Update_Click(object sender, RoutedEventArgs e)
     {
+        // 連打で 2 本目のダウンロードが走ると、同じファイルへ二重に書き込んで壊れる
         if (_working) return;
         _working = true;
 
-        UpdateButton.IsEnabled = false;
-        CloseButton.IsEnabled = false;
-        StatusText.Visibility = Visibility.Visible;
-        Progress.Visibility = Visibility.Visible;
+        _cts = new CancellationTokenSource();
+        SetBusyUi(true);
         StatusText.Text = "ダウンロードしています…";
 
         try
@@ -61,12 +71,17 @@ public partial class UpdateWindow : Window
                 StatusText.Text = $"ダウンロードしています… {p * 100:F0}%";
             });
 
-            var file = await _updater.DownloadAsync(_info, progress);
+            var file = await _updater.DownloadAsync(_info, progress, _cts.Token);
 
+            // ここから先は中断できない。閉じる操作もブロックする
+            _applying = true;
+            CloseButton.IsEnabled = false;
             StatusText.Text = "更新を適用しています…";
             Progress.IsIndeterminate = true;
 
-            if (_updater.ApplyUpdate(file))
+            // 数十 MB のコピーを含むため、UI スレッドを止めないよう別スレッドで行う
+            bool applied = await Task.Run(() => _updater.ApplyUpdate(file));
+            if (applied)
             {
                 // 新しいバージョンが起動済み。こちらは速やかに終了する
                 _shutdown();
@@ -77,6 +92,11 @@ public partial class UpdateWindow : Window
             Progress.Visibility = Visibility.Collapsed;
             ToastWindow.Show("更新に失敗しました。リリースページから手動で差し替えてください。", ToastKind.Error);
         }
+        catch (OperationCanceledException)
+        {
+            StatusText.Text = "ダウンロードを中止しました。";
+            Progress.Visibility = Visibility.Collapsed;
+        }
         catch (Exception ex)
         {
             StatusText.Text = $"更新できませんでした。{UserMessage.Describe(ex)}";
@@ -84,11 +104,44 @@ public partial class UpdateWindow : Window
         }
         finally
         {
+            _applying = false;
             _working = false;
-            UpdateButton.IsEnabled = true;
-            CloseButton.IsEnabled = true;
+            _cts?.Dispose();
+            _cts = null;
             Progress.IsIndeterminate = false;
+            SetBusyUi(false);
         }
+    }
+
+    /// <summary>ダウンロード中は他の操作を止め、「あとで」を中止ボタンに変える。</summary>
+    private void SetBusyUi(bool busy)
+    {
+        UpdateButton.IsEnabled = !busy;
+        SkipButton.IsEnabled = !busy;
+        ReleasePageButton.IsEnabled = !busy;
+        CloseButton.IsEnabled = true;
+        CloseButton.Content = busy ? "中止" : "あとで";
+        if (busy)
+        {
+            StatusText.Visibility = Visibility.Visible;
+            Progress.Visibility = Visibility.Visible;
+        }
+    }
+
+    /// <summary>
+    /// ダウンロード中に閉じられたら、通信を止めて書きかけの一時ファイルを残さない。
+    /// exe の入れ替え中は、途中で終了すると復旧できなくなるため閉じさせない。
+    /// </summary>
+    protected override void OnClosing(System.ComponentModel.CancelEventArgs e)
+    {
+        if (_applying)
+        {
+            e.Cancel = true;
+            StatusText.Text = "更新を適用しています。完了するまでお待ちください。";
+            return;
+        }
+        _cts?.Cancel();
+        base.OnClosing(e);
     }
 
     private void ReleasePage_Click(object sender, RoutedEventArgs e)
@@ -106,11 +159,16 @@ public partial class UpdateWindow : Window
     private void Skip_Click(object sender, RoutedEventArgs e)
     {
         _settings.Update(s => s.SkippedVersion = _info.Version.ToString());
+        Skipped = true;
         ToastWindow.Show($"バージョン {_info.Version} は今後お知らせしません。手動での確認はいつでもできます。");
         Close();
     }
 
-    private void Close_Click(object sender, RoutedEventArgs e) => Close();
+    private void Close_Click(object sender, RoutedEventArgs e)
+    {
+        // ダウンロード中は「中止」として働く（OnClosing で通信を止める）
+        Close();
+    }
 
     /// <summary>
     /// リリースノートの Markdown を、そのまま読める平文へ整える。

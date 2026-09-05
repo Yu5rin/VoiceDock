@@ -165,9 +165,19 @@
                                 </ControlTemplate>
                             </ToggleButton.Template>
                         </ToggleButton>
-                        <ContentPresenter Margin="10,0,26,0" VerticalAlignment="Center" IsHitTestVisible="False"
+                        <ContentPresenter x:Name="SelectionBox" Margin="10,0,26,0" VerticalAlignment="Center"
+                                          IsHitTestVisible="False"
                                           Content="{TemplateBinding SelectionBoxItem}"
                                           ContentTemplate="{TemplateBinding SelectionBoxItemTemplate}"/>
+                        <!-- IsEditable="True" のときの入力欄。名前が PART_EditableTextBox でないと
+                             WPF が入力欄を見つけられず、手入力できないコンボボックスになる。 -->
+                        <TextBox x:Name="PART_EditableTextBox" Margin="6,1,26,1" Padding="0"
+                                 VerticalAlignment="Center" Visibility="Collapsed"
+                                 Background="Transparent" BorderThickness="0"
+                                 Foreground="{StaticResource FgBrush}"
+                                 CaretBrush="{StaticResource FgBrush}"
+                                 SelectionBrush="#664C8DFF"
+                                 IsReadOnly="{TemplateBinding IsReadOnly}"/>
                         <Popup x:Name="PART_Popup" Placement="Bottom" AllowsTransparency="True"
                                IsOpen="{TemplateBinding IsDropDownOpen}" StaysOpen="False">
                             <Border Background="{StaticResource PanelBrush}" BorderBrush="{StaticResource BorderBrush}"
@@ -179,6 +189,15 @@
                             </Border>
                         </Popup>
                     </Grid>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="IsEditable" Value="True">
+                            <Setter TargetName="PART_EditableTextBox" Property="Visibility" Value="Visible"/>
+                            <Setter TargetName="SelectionBox" Property="Visibility" Value="Collapsed"/>
+                        </Trigger>
+                        <Trigger Property="IsEnabled" Value="False">
+                            <Setter Property="Opacity" Value="0.5"/>
+                        </Trigger>
+                    </ControlTemplate.Triggers>
                 </ControlTemplate>
             </Setter.Value>
         </Setter>

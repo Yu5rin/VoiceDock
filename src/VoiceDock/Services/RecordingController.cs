@@ -15,6 +15,16 @@ public sealed class RecordingController : IDisposable
 {
     private static readonly TimeSpan SilenceAutoStop = TimeSpan.FromSeconds(30);
 
+    /// <summary>
+    /// 停止したあと、認識エンジンから最後の確定テキストが届くまでの猶予。
+    /// 話し終えてすぐキーを離すと確定がわずかに遅れて届くため、
+    /// ここで打ち切ると最後のひと言が丸ごと消えてしまう。
+    /// </summary>
+    private static readonly TimeSpan FinalGraceAfterStop = TimeSpan.FromSeconds(3);
+
+    /// <summary>同じ認識エラーを繰り返し通知しない間隔。</summary>
+    private static readonly TimeSpan ErrorNoticeInterval = TimeSpan.FromMinutes(1);
+
     private readonly LogService _log;
     private readonly SettingsService _settings;
     private readonly TextProcessor _processor;
@@ -28,6 +38,15 @@ public sealed class RecordingController : IDisposable
     private DispatcherTimer? _silenceTimer;
     private bool _localModeNotified;
     private bool _localFallbackNotified;
+
+    /// <summary>停止した時刻。停止直後に届く確定テキストを取りこぼさないために見る。</summary>
+    private DateTime _stoppedAtUtc = DateTime.MinValue;
+
+    /// <summary>認識エラーの種類ごとの最終通知時刻。同じ内容の連発を抑える。</summary>
+    private readonly Dictionary<string, DateTime> _errorNoticedAtUtc = new(StringComparer.Ordinal);
+
+    /// <summary>エラーでトレイを赤くしているかどうか（復帰したら戻す）。</summary>
+    private bool _inErrorState;
 
     /// <summary>
     /// 直前に入力したテキストの「見た目の文字数」（取り消し用）。0 なら取り消す対象なし。
@@ -102,7 +121,7 @@ public sealed class RecordingController : IDisposable
     }
 
     /// <summary>
-    /// 押している間だけ録音する方式で、ホットキーが押されたときの入口。
+    /// 押している間だけ音声入力する方式で、ホットキーが押されたときの入口。
     /// IME 変換中は無視する。
     /// </summary>
     public void BeginPushToTalk()
@@ -138,6 +157,7 @@ public sealed class RecordingController : IDisposable
         }
 
         _listening = true;
+        _stoppedAtUtc = DateTime.MinValue;
         _ = _bridge.StartRecognitionAsync(_settings.Current.PreferLocalRecognition);
         _tray.SetState(TrayState.Recording);
         _overlay.ShowOverlay();
@@ -151,6 +171,7 @@ public sealed class RecordingController : IDisposable
     {
         if (!_listening) return;
         _listening = false;
+        _stoppedAtUtc = DateTime.UtcNow;
         _ = _bridge.StopRecognitionAsync();
         StopSilenceTimer();
         _overlay.HideOverlay();
@@ -168,9 +189,19 @@ public sealed class RecordingController : IDisposable
         {
             lock (_sync)
             {
-                if (!_listening) return;
-                ResetSilenceTimer();
+                if (_listening)
+                {
+                    ResetSilenceTimer();
+                }
+                else if (DateTime.UtcNow - _stoppedAtUtc > FinalGraceAfterStop)
+                {
+                    // 停止からだいぶ経ってから届いたものは、別の場面の取りこぼしとみなす
+                    return;
+                }
             }
+
+            // 認識できているのだから、直前のエラー表示は解除してよい
+            ClearErrorState();
 
             _overlay.ClearPartialText();
 
@@ -325,28 +356,63 @@ public sealed class RecordingController : IDisposable
     {
         _dispatcher.BeginInvoke(() =>
         {
+            // ログには毎回残すが、通知は種類ごとに間隔を空ける。
+            // 認識エンジンは同じエラーを短時間に何度も返すことがあり、
+            // そのたびに通知を出すと画面が埋まってしまう。
             switch (detail)
             {
                 case "not-allowed":
                 case "service-not-allowed":
                     _log.Error($"マイクの使用が許可されていません ({detail})");
-                    _tray.SetState(TrayState.Error);
-                    ToastWindow.Show("マイクの使用が許可されていません。ブラウザのマイク権限を確認してください。", ToastKind.Error);
+                    SetErrorState();
+                    if (ShouldNotify(detail))
+                        ToastWindow.Show("マイクの使用が許可されていません。ブラウザのマイク権限を確認してください。", ToastKind.Error);
                     break;
                 case "speech-unsupported":
                     _log.Error("このブラウザは Web Speech API に対応していません");
-                    _tray.SetState(TrayState.Error);
-                    ToastWindow.Show("認識ブラウザが Web Speech API に対応していません。Edge/Chrome をご利用ください。", ToastKind.Error);
+                    SetErrorState();
+                    if (ShouldNotify(detail))
+                        ToastWindow.Show("認識ブラウザが Web Speech API に対応していません。Edge/Chrome をご利用ください。", ToastKind.Error);
                     break;
                 case "network":
                     _log.Warn("認識でネットワークエラーが発生しました");
-                    ToastWindow.Show("音声認識のネットワークエラーが発生しました。接続を確認してください。", ToastKind.Warning);
+                    if (ShouldNotify(detail))
+                        ToastWindow.Show("音声認識のネットワークエラーが発生しました。接続を確認してください。", ToastKind.Warning);
                     break;
                 default:
                     _log.Warn($"認識エラー: {detail}");
                     break;
             }
         });
+    }
+
+    /// <summary>同じ内容の通知を短時間に繰り返さないための判定。</summary>
+    private bool ShouldNotify(string key)
+    {
+        var now = DateTime.UtcNow;
+        if (_errorNoticedAtUtc.TryGetValue(key, out var last) && now - last < ErrorNoticeInterval)
+            return false;
+        _errorNoticedAtUtc[key] = now;
+        return true;
+    }
+
+    private void SetErrorState()
+    {
+        _inErrorState = true;
+        _tray.SetState(TrayState.Error);
+    }
+
+    /// <summary>
+    /// エラー表示を解除する。一度赤くなったまま戻らないと、
+    /// 問題が解決したあとも壊れているように見えてしまう。
+    /// </summary>
+    private void ClearErrorState()
+    {
+        if (!_inErrorState) return;
+        _inErrorState = false;
+        _errorNoticedAtUtc.Clear();
+        _tray.SetState(IsListening ? TrayState.Recording : TrayState.Idle);
+        _log.Info("認識できたため、エラー表示を解除しました");
     }
 
     private void ResetSilenceTimer()

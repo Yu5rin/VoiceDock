@@ -43,7 +43,7 @@ public partial class SettingsWindow : Window
         StartupCheck.IsChecked = settings.Current.StartupEnabled;
 
         HotkeyModeCombo.Items.Add("押すたびに開始/停止（トグル）");
-        HotkeyModeCombo.Items.Add("押している間だけ録音");
+        HotkeyModeCombo.Items.Add("押している間だけ音声入力（押しっぱなし）");
         HotkeyModeCombo.SelectedIndex = settings.Current.HotkeyMode == HotkeyMode.PushToTalk ? 1 : 0;
 
         NewlineCombo.Items.Add("Shift+Enter（推奨・大半のアプリで改行）");
@@ -158,7 +158,7 @@ public partial class SettingsWindow : Window
     {
         e.Handled = true;
 
-        var key = e.Key == Key.System ? e.SystemKey : e.Key;
+        var key = ResolveKey(e);
         if (key is Key.LeftCtrl or Key.RightCtrl or Key.LeftAlt or Key.RightAlt
             or Key.LeftShift or Key.RightShift or Key.LWin or Key.RWin)
             return;
@@ -218,7 +218,7 @@ public partial class SettingsWindow : Window
     {
         e.Handled = true;
 
-        var key = e.Key == Key.System ? e.SystemKey : e.Key;
+        var key = ResolveKey(e);
         // 修飾キー単独は確定しない
         if (key is Key.LeftCtrl or Key.RightCtrl or Key.LeftAlt or Key.RightAlt
             or Key.LeftShift or Key.RightShift or Key.LWin or Key.RWin)
@@ -243,6 +243,18 @@ public partial class SettingsWindow : Window
             ShowHotkeyWarning($"{spec} は他のアプリと衝突しているため登録できませんでした。別のキーを指定してください。");
         }
     }
+
+    /// <summary>
+    /// 押されたキーを取り出す。Alt との組み合わせは SystemKey、
+    /// IME がオンのときは ImeProcessedKey に入るため、そのまま e.Key を見ると
+    /// 「Ctrl+ImeProcessed」のような意味のない指定になってしまう。
+    /// </summary>
+    private static Key ResolveKey(KeyEventArgs e) => e.Key switch
+    {
+        Key.System => e.SystemKey,
+        Key.ImeProcessed => e.ImeProcessedKey,
+        _ => e.Key,
+    };
 
     private void ShowHotkeyWarning(string message)
     {

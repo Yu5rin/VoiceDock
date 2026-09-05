@@ -101,6 +101,7 @@ public partial class App : Application
         _tray.DictionaryRequested += ShowDictionary;
         _tray.SnippetRequested += ShowSnippets;
         _tray.LogRequested += ShowLog;
+        _tray.RestartEngineRequested += RestartBrowser;
         _tray.UpdateCheckRequested += () =>
         {
             // 起動時に見つけた更新があれば、通信し直さずそのまま案内画面を出す

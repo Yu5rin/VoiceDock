@@ -81,10 +81,12 @@
                             <Setter TargetName="Bd" Property="Background" Value="#FF44444C"/>
                         </Trigger>
                         <Trigger Property="IsEnabled" Value="False">
-                            <!-- 0.4 では暗い背景で判読しづらいため、文字色を落として表現する -->
-                            <Setter Property="Opacity" Value="0.7"/>
+                            <!-- 半透明にすると暗い背景では文字が読めなくなる。
+                                 不透明のまま、色を落として「押せない」ことを示す -->
                             <Setter Property="Foreground" Value="{StaticResource SubFgBrush}"/>
+                            <Setter Property="Cursor" Value="Arrow"/>
                             <Setter TargetName="Bd" Property="Background" Value="{StaticResource PanelBrush}"/>
+                            <Setter TargetName="Bd" Property="BorderBrush" Value="{StaticResource BorderBrush}"/>
                         </Trigger>
                     </ControlTemplate.Triggers>
                 </ControlTemplate>

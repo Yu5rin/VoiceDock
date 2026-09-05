@@ -8,7 +8,7 @@
         Focusable="False" ResizeMode="NoResize" Opacity="0"
         FontFamily="Yu Gothic UI, Yu Gothic, Meiryo UI, sans-serif" FontSize="13">
     <!-- ミニマルデザインに合わせた自作トースト通知（バルーン通知は使わない） -->
-    <Border CornerRadius="8" Background="{DynamicResource ToastBrush}" BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1">
+    <Border CornerRadius="8" Cursor="Hand" Background="{DynamicResource ToastBrush}" BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1">
         <Grid>
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="Auto"/>
@@ -19,6 +19,10 @@
             <StackPanel Grid.Column="1" Margin="12,12,16,12">
                 <TextBlock x:Name="TitleText" Foreground="{DynamicResource FgBrush}" FontWeight="Bold" Text="VoiceDock"/>
                 <TextBlock x:Name="MessageText" Foreground="{DynamicResource SubFgBrush}" TextWrapping="Wrap" Margin="0,4,0,0"/>
+                <!-- 自動で消えない通知にだけ出す案内 -->
+                <TextBlock x:Name="DismissHint" Foreground="{DynamicResource SubFgBrush}" FontSize="11"
+                           Opacity="0.7" Margin="0,6,0,0" Visibility="Collapsed"
+                           Text="クリックすると閉じます"/>
             </StackPanel>
         </Grid>
     </Border>

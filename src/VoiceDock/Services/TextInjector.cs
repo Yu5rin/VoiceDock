@@ -1,3 +1,4 @@
+using System.Linq;
 using System.Runtime.InteropServices;
 using VoiceDock.Models;
 
@@ -64,16 +65,24 @@ public static class TextInjector
             }
 
             var array = inputs.ToArray();
-            const int chunkSize = 512;
-            for (int offset = 0; offset < array.Length; offset += chunkSize)
+            var heldModifiers = ReleaseHeldModifiers();
+            try
             {
-                int n = Math.Min(chunkSize, array.Length - offset);
-                var chunk = new INPUT[n];
-                Array.Copy(array, offset, chunk, 0, n);
-                if (SendInput((uint)n, chunk, Marshal.SizeOf<INPUT>()) != n)
-                    return false;
+                const int chunkSize = 512;
+                for (int offset = 0; offset < array.Length; offset += chunkSize)
+                {
+                    int n = Math.Min(chunkSize, array.Length - offset);
+                    var chunk = new INPUT[n];
+                    Array.Copy(array, offset, chunk, 0, n);
+                    if (SendInput((uint)n, chunk, Marshal.SizeOf<INPUT>()) != n)
+                        return false;
+                }
+                return true;
             }
-            return true;
+            finally
+            {
+                RestoreHeldModifiers(heldModifiers);
+            }
         }
     }
 
@@ -114,16 +123,16 @@ public static class TextInjector
     {
         if (!HasTextInputFocus()) return false;
 
-        string? backup = null;
-        bool hadText = false;
+        // 文字列だけを控えていると、画像やファイルをコピーしていた場合に
+        // 中身を消してしまう。形式を問わず控えを取っておく。
+        var backup = CaptureClipboard();
+        List<ushort>? heldModifiers = null;
         try
         {
-            if (System.Windows.Clipboard.ContainsText())
-            {
-                backup = System.Windows.Clipboard.GetText();
-                hadText = true;
-            }
             System.Windows.Clipboard.SetDataObject(text, true);
+
+            // ホットキーを握ったままだと Ctrl+Shift+V 等になってしまうため、いったん離す
+            heldModifiers = ReleaseHeldModifiers();
 
             // Ctrl+V を送出
             var inputs = new[]
@@ -136,29 +145,70 @@ public static class TextInjector
             bool ok = SendInput((uint)inputs.Length, inputs, Marshal.SizeOf<INPUT>()) == inputs.Length;
 
             // 貼り付け処理がクリップボードを読み終えるのを待ってから復元する
-            if (hadText)
-            {
-                var restore = backup;
-                _ = Task.Delay(300).ContinueWith(_ =>
-                {
-                    try
-                    {
-                        var thread = new Thread(() =>
-                        {
-                            try { System.Windows.Clipboard.SetDataObject(restore!, true); } catch { /* 復元失敗は無視 */ }
-                        });
-                        thread.SetApartmentState(ApartmentState.STA);
-                        thread.Start();
-                    }
-                    catch { /* 復元失敗は無視 */ }
-                });
-            }
+            if (backup != null) RestoreClipboardLater(backup);
             return ok;
         }
         catch
         {
             return false;
         }
+        finally
+        {
+            if (heldModifiers != null) RestoreHeldModifiers(heldModifiers);
+        }
+    }
+
+    /// <summary>
+    /// 現在のクリップボードの内容を、形式を保ったまま控える。
+    /// 取得できない形式は諦めるが、少なくとも文字列・画像・ファイル一覧は残せる。
+    /// </summary>
+    private static System.Windows.DataObject? CaptureClipboard()
+    {
+        try
+        {
+            var current = System.Windows.Clipboard.GetDataObject();
+            if (current == null) return null;
+
+            var copy = new System.Windows.DataObject();
+            bool any = false;
+            foreach (var format in current.GetFormats())
+            {
+                try
+                {
+                    var data = current.GetData(format);
+                    if (data == null) continue;
+                    copy.SetData(format, data);
+                    any = true;
+                }
+                catch
+                {
+                    // 取り出せない形式は諦める
+                }
+            }
+            return any ? copy : null;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    /// <summary>貼り付けが終わる頃合いを見て、控えたクリップボードの内容を書き戻す。</summary>
+    private static void RestoreClipboardLater(System.Windows.DataObject backup)
+    {
+        _ = Task.Delay(300).ContinueWith(_ =>
+        {
+            try
+            {
+                var thread = new Thread(() =>
+                {
+                    try { System.Windows.Clipboard.SetDataObject(backup, true); } catch { /* 復元失敗は無視 */ }
+                });
+                thread.SetApartmentState(ApartmentState.STA);
+                thread.Start();
+            }
+            catch { /* 復元失敗は無視 */ }
+        });
     }
 
     private static INPUT MakeKeyInput(ushort vk, bool keyUp) => new()
@@ -199,6 +249,47 @@ public static class TextInjector
     private const ushort VK_SHIFT = 0x10;
     private const ushort VK_MENU = 0x12;   // Alt
     private const ushort VK_RETURN = 0x0D;
+    private const ushort VK_LWIN = 0x5B;
+    private const ushort VK_RWIN = 0x5C;
+
+    /// <summary>入力の邪魔になる修飾キー。押しっぱなし方式ではホットキーを握ったまま送出されるため。</summary>
+    private static readonly ushort[] ModifierKeysToRelease =
+        { VK_CONTROL, VK_SHIFT, VK_MENU, VK_LWIN, VK_RWIN };
+
+    /// <summary>
+    /// 利用者が物理的に押している修飾キーを、一時的に「離した」ことにする。
+    ///
+    /// 押している間だけ録音する方式では、Ctrl+Shift+... を握ったまま入力が始まる。
+    /// その状態で文字や Ctrl+V を送ると、対象アプリはショートカット（Ctrl+Shift+V 等）
+    /// として解釈してしまい、文字が入らなかったり別の動作をしたりする。
+    /// </summary>
+    /// <returns>解除したキーの一覧（あとで押し直すために使う）。</returns>
+    private static List<ushort> ReleaseHeldModifiers()
+    {
+        var released = new List<ushort>();
+        foreach (var vk in ModifierKeysToRelease)
+        {
+            // 最上位ビットが立っていれば、そのキーは今押されている
+            if ((GetAsyncKeyState(vk) & 0x8000) == 0) continue;
+            released.Add(vk);
+        }
+        if (released.Count == 0) return released;
+
+        var inputs = released.Select(vk => MakeKeyInput(vk, keyUp: true)).ToArray();
+        SendInput((uint)inputs.Length, inputs, Marshal.SizeOf<INPUT>());
+        return released;
+    }
+
+    /// <summary>解除した修飾キーを、まだ押されたままなら押し直す。</summary>
+    private static void RestoreHeldModifiers(List<ushort> released)
+    {
+        if (released.Count == 0) return;
+        var stillHeld = released.Where(vk => (GetAsyncKeyState(vk) & 0x8000) != 0)
+                                .Select(vk => MakeKeyInput(vk, keyUp: false))
+                                .ToArray();
+        if (stillHeld.Length > 0)
+            SendInput((uint)stillHeld.Length, stillHeld, Marshal.SizeOf<INPUT>());
+    }
 
     /// <summary>
     /// テキストをキー入力として送出する。成功可否を返す。
@@ -220,14 +311,17 @@ public static class TextInjector
             if (focused == IntPtr.Zero) return false;
 
             var inputs = new List<INPUT>(text.Length * 2);
-            foreach (char c in text)
+            for (int i = 0; i < text.Length; i++)
             {
+                char c = text[i];
                 if (c is '\n' or '\r')
                 {
                     // 改行は Unicode 文字ではなく実際の Enter キーとして送る。
                     // Unicode の CR を送るとチャットアプリでは「送信」と解釈されてしまい、
                     // かつ改行を受け付けない入力欄では何も起きないことがあるため。
                     AppendNewlineKeys(inputs, newlineMode);
+                    // CRLF は 2 文字で 1 つの改行。片方を読み飛ばさないと 2 行空いてしまう
+                    if (c == '\r' && i + 1 < text.Length && text[i + 1] == '\n') i++;
                     continue;
                 }
                 inputs.Add(MakeUnicodeInput(c, keyUp: false));
@@ -243,6 +337,8 @@ public static class TextInjector
             // IME 状態の変更は ImmAssociateContext ではなく、対象スレッドの既定 IME
             // ウィンドウへ WM_IME_CONTROL を送る方式を使う。ImmAssociateContext は
             // 他プロセスのウィンドウには効かないため。
+            // ホットキーを握ったままでもそのまま文字が入るようにする
+            var heldModifiers = ReleaseHeldModifiers();
             bool imeWasOpen = TrySetImeOpen(focused, open: false);
             try
             {
@@ -269,6 +365,7 @@ public static class TextInjector
             {
                 // IME を元の状態に戻す
                 if (imeWasOpen) TrySetImeOpen(focused, open: true);
+                RestoreHeldModifiers(heldModifiers);
             }
         }
     }
@@ -356,6 +453,9 @@ public static class TextInjector
 
     [DllImport("user32.dll", SetLastError = true)]
     private static extern uint SendInput(uint nInputs, INPUT[] pInputs, int cbSize);
+
+    [DllImport("user32.dll")]
+    private static extern short GetAsyncKeyState(int vKey);
 
     private const uint WM_IME_CONTROL = 0x0283;
     private const int IMC_GETOPENSTATUS = 0x0005;

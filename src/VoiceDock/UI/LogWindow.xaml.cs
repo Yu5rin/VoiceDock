@@ -12,6 +12,9 @@ namespace VoiceDock.UI;
 /// </summary>
 public partial class LogWindow : Window
 {
+    /// <summary>画面に保持する最大件数。開きっぱなしでも際限なく増えないようにする。</summary>
+    private const int MaxEntries = 2000;
+
     private readonly LogService _log;
     private readonly List<LogEntry> _entries = new();
     private string _filter = "すべて";
@@ -37,6 +40,16 @@ public partial class LogWindow : Window
         Dispatcher.BeginInvoke(() =>
         {
             _entries.Add(entry);
+
+            // 上限を超えたら古い方をまとめて捨てる。1 件ずつ削ると
+            // そのたびに一覧を作り直すことになり、動作が重くなる。
+            if (_entries.Count > MaxEntries)
+            {
+                _entries.RemoveRange(0, _entries.Count - MaxEntries * 9 / 10);
+                Rebuild();
+                return;
+            }
+
             if (Matches(entry))
             {
                 LogList.Items.Add(entry.ToString());

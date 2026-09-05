@@ -30,8 +30,18 @@ public sealed class LogService
     private const int MaxMemoryEntries = 2000;
     private const int RetentionDays = 30;
 
+    /// <summary>1 日分のログファイルの上限。超えたら .1 へ退避して新しく書き始める。</summary>
+    private const long MaxFileBytes = 5 * 1024 * 1024;
+
     private readonly object _sync = new();
     private readonly LinkedList<LogEntry> _recent = new();
+
+    /// <summary>
+    /// 認識テキストをファイルに保存するかどうか。
+    /// 音声入力の内容そのものが平文で残るため、既定では保存しない
+    /// （画面のログ一覧には出るが、ファイルには書かない）。
+    /// </summary>
+    public bool PersistRecognitionText { get; set; }
 
     public event Action<LogEntry>? EntryAdded;
 
@@ -52,18 +62,71 @@ public sealed class LogService
         {
             _recent.AddLast(entry);
             while (_recent.Count > MaxMemoryEntries) _recent.RemoveFirst();
-            try
+
+            // 認識テキストは音声入力の内容そのものなので、明示的に許可された場合だけ保存する
+            if (level == LogLevel.Recognition && !PersistRecognitionText) { }
+            else
             {
-                Directory.CreateDirectory(AppPaths.LogsDir);
-                var file = Path.Combine(AppPaths.LogsDir, $"voicedock-{entry.Time:yyyyMMdd}.log");
-                File.AppendAllText(file, entry + Environment.NewLine, Encoding.UTF8);
-            }
-            catch
-            {
-                // ログ書き込み失敗でアプリを止めない
+                try
+                {
+                    Directory.CreateDirectory(AppPaths.LogsDir);
+                    var file = Path.Combine(AppPaths.LogsDir, $"voicedock-{entry.Time:yyyyMMdd}.log");
+                    RotateIfTooLarge(file);
+                    File.AppendAllText(file, entry + Environment.NewLine, Encoding.UTF8);
+                }
+                catch
+                {
+                    // ログ書き込み失敗でアプリを止めない
+                }
             }
         }
         EntryAdded?.Invoke(entry);
+    }
+
+    /// <summary>1 ファイルが大きくなりすぎた場合、1 世代だけ退避して書き直す。</summary>
+    private static void RotateIfTooLarge(string file)
+    {
+        try
+        {
+            var info = new FileInfo(file);
+            if (!info.Exists || info.Length < MaxFileBytes) return;
+            var rotated = file + ".1";
+            if (File.Exists(rotated)) File.Delete(rotated);
+            File.Move(file, rotated);
+        }
+        catch
+        {
+            // 退避できなくても書き込みは続行する
+        }
+    }
+
+    /// <summary>保存済みのログファイルをすべて削除する（画面からの手動操作用）。</summary>
+    public int DeleteAllLogFiles()
+    {
+        lock (_sync)
+        {
+            int deleted = 0;
+            try
+            {
+                if (!Directory.Exists(AppPaths.LogsDir)) return 0;
+                foreach (var file in Directory.GetFiles(AppPaths.LogsDir, "voicedock-*.log*"))
+                {
+                    try { File.Delete(file); deleted++; }
+                    catch { /* 使用中のファイルは飛ばす */ }
+                }
+            }
+            catch
+            {
+                // 列挙に失敗しても画面は動かす
+            }
+            return deleted;
+        }
+    }
+
+    /// <summary>画面に表示している履歴を消す（ファイルには触れない）。</summary>
+    public void ClearMemory()
+    {
+        lock (_sync) _recent.Clear();
     }
 
     /// <summary>保存期間(30日)を過ぎたログファイルを削除する。起動時に呼ぶ。</summary>
@@ -73,9 +136,10 @@ public sealed class LogService
         {
             if (!Directory.Exists(AppPaths.LogsDir)) return;
             var limit = DateTime.Now.Date.AddDays(-RetentionDays);
-            foreach (var file in Directory.GetFiles(AppPaths.LogsDir, "voicedock-*.log"))
+            foreach (var file in Directory.GetFiles(AppPaths.LogsDir, "voicedock-*.log*"))
             {
-                var name = Path.GetFileNameWithoutExtension(file); // voicedock-yyyyMMdd
+                var name = Path.GetFileName(file)["voicedock-".Length..];
+                name = "voicedock-" + (name.Length >= 8 ? name[..8] : name);
                 var datePart = name["voicedock-".Length..];
                 if (DateTime.TryParseExact(datePart, "yyyyMMdd", null,
                         System.Globalization.DateTimeStyles.None, out var date) && date < limit)

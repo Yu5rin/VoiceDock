@@ -34,8 +34,20 @@ public sealed class UpdateService
     private static readonly TimeSpan CheckInterval = TimeSpan.FromHours(24);
     private const string OldSuffix = ".old";
 
+    /// <summary>更新直後の再起動であることを新プロセスへ伝えるコマンドライン引数。</summary>
+    public const string AfterUpdateArgument = "--after-update";
+
+    /// <summary>更新直後は、旧プロセスの終了を待ってから二重起動を判定する。</summary>
+    public static readonly TimeSpan AfterUpdateWait = TimeSpan.FromSeconds(30);
+
     private readonly LogService _log;
     private readonly SettingsService _settings;
+
+    /// <summary>確認中に再度押されても多重にリクエストしないためのフラグ。</summary>
+    private int _checking;
+
+    /// <summary>いま更新を確認中かどうか。</summary>
+    public bool IsChecking => Volatile.Read(ref _checking) != 0;
 
     public UpdateService(LogService log, SettingsService settings)
     {
@@ -68,8 +80,10 @@ public sealed class UpdateService
     /// 最新リリースを確認する。新しい版があればその情報を、無ければ null を返す。
     /// 通信エラーは握りつぶして null を返す（起動を妨げない）。
     /// </summary>
-    public async Task<UpdateInfo?> CheckForUpdateAsync(CancellationToken ct = default)
+    public async Task<UpdateInfo?> CheckForUpdateAsync(bool ignoreSkipped = false, CancellationToken ct = default)
     {
+        // 連打されても通信は 1 本に保つ
+        if (Interlocked.Exchange(ref _checking, 1) != 0) return null;
         try
         {
             using var http = CreateClient();
@@ -100,6 +114,13 @@ public sealed class UpdateService
                 return null;
             }
 
+            // 利用者が「この版はスキップ」を選んでいる場合、自動確認では案内しない
+            if (!ignoreSkipped && _settings.Current.SkippedVersion == info.Version.ToString())
+            {
+                _log.Info($"更新の確認: バージョン {info.Version} はスキップ指定されています");
+                return null;
+            }
+
             _log.Info($"更新の確認: 新しい版があります (現在 {CurrentVersion} → {info.Version})");
             return info;
         }
@@ -108,6 +129,10 @@ public sealed class UpdateService
             // 更新が確認できなくても動作に支障はないため、警告に留める
             _log.Warn($"更新を確認できませんでした: {ex.Message}");
             return null;
+        }
+        finally
+        {
+            Volatile.Write(ref _checking, 0);
         }
     }
 
@@ -274,7 +299,11 @@ public sealed class UpdateService
 
             File.Copy(downloadedExe, current, overwrite: true);
 
-            Process.Start(new ProcessStartInfo(current) { UseShellExecute = true });
+            // 旧プロセスがまだ終了しきっていないため、新プロセス側で二重起動判定を
+            // 待つよう伝える（この引数が無いと「既に起動しています」で即終了してしまう）
+            var psi = new ProcessStartInfo(current) { UseShellExecute = true };
+            psi.ArgumentList.Add(AfterUpdateArgument);
+            Process.Start(psi);
 
             // 入れ替えが済んだので、ダウンロードした一時ファイル（数十 MB）は不要
             TryDelete(downloadedExe);

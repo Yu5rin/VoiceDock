@@ -15,7 +15,18 @@ namespace VoiceDock.Services;
 public sealed class SpeechBridgeServer : IDisposable
 {
     private readonly LogService _log;
+
+    /// <summary>WebSocket 接続用のトークン。ページの中にだけ埋め込み、外には出さない。</summary>
     private readonly string _token = Guid.NewGuid().ToString("N");
+
+    /// <summary>
+    /// 認識ページを 1 回だけ取得できる使い捨てトークン。
+    /// ページの URL はブラウザの起動引数に載るため、同じ PC の別プロセスから
+    /// コマンドラインを読まれる可能性がある。使い捨てにしておけば、読まれた時点では
+    /// 既に消費済みでページを取得できず、WebSocket 用トークンも盗まれない。
+    /// </summary>
+    private string _pageToken = "";
+
     private readonly SemaphoreSlim _sendLock = new(1, 1);
 
     private HttpListener? _listener;
@@ -23,8 +34,15 @@ public sealed class SpeechBridgeServer : IDisposable
     private CancellationTokenSource? _cts;
     private int _port;
 
-    /// <summary>ブラウザに読み込ませる認識ページの URL。</summary>
-    public string PageUrl => $"http://127.0.0.1:{_port}/";
+    /// <summary>
+    /// 認識ページの URL を新しく発行する。呼ぶたびに使い捨てトークンが更新されるため、
+    /// ブラウザを起動・再起動するたびにこれを呼ぶこと。
+    /// </summary>
+    public string IssuePageUrl()
+    {
+        _pageToken = Guid.NewGuid().ToString("N");
+        return $"http://127.0.0.1:{_port}/?token={_pageToken}";
+    }
 
     /// <summary>ブラウザ(WebSocket)が接続済みかどうか。</summary>
     public bool IsConnected => _socket?.State == WebSocketState.Open;
@@ -65,7 +83,7 @@ public sealed class SpeechBridgeServer : IDisposable
         // 特定 IP + ポートなら管理者権限・URL 予約なしでバインドできる
         _listener.Prefixes.Add($"http://127.0.0.1:{_port}/");
         _listener.Start();
-        _log.Info($"認識ブリッジを起動しました: {PageUrl}");
+        _log.Info($"認識ブリッジを起動しました (127.0.0.1:{_port})");
 
         _ = AcceptLoopAsync(_cts.Token);
     }
@@ -117,12 +135,28 @@ public sealed class SpeechBridgeServer : IDisposable
                     return;
                 }
                 var wsCtx = await ctx.AcceptWebSocketAsync(subProtocol: null);
+                // 再接続時に古い接続を残さない
+                var previous = _socket;
                 _socket = wsCtx.WebSocket;
+                if (previous != null)
+                {
+                    try { previous.Abort(); previous.Dispose(); } catch { /* 無視 */ }
+                }
                 _log.Info("ブラウザが認識ブリッジに接続しました");
                 await ReceiveLoopAsync(_socket, ct);
             }
             else
             {
+                // ページは使い捨てトークンでのみ取得できる。取得した時点で無効化する
+                var pageToken = _pageToken;
+                if (pageToken.Length == 0 || ctx.Request.QueryString["token"] != pageToken)
+                {
+                    ctx.Response.StatusCode = 403;
+                    ctx.Response.Close();
+                    return;
+                }
+                _pageToken = "";
+
                 var html = Encoding.UTF8.GetBytes(BuildPageHtml());
                 ctx.Response.ContentType = "text/html; charset=utf-8";
                 ctx.Response.ContentLength64 = html.Length;

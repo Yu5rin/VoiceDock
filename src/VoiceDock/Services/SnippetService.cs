@@ -25,6 +25,13 @@ public sealed class SnippetService
     private readonly LogService _log;
     private readonly object _sync = new();
     private List<SnippetEntry> _entries = new();
+    private bool _loadFailed;
+
+    private static bool IsValidJson(string text)
+    {
+        try { using var _ = JsonDocument.Parse(text); return true; }
+        catch { return false; }
+    }
 
     public SnippetService(LogService log)
     {
@@ -44,11 +51,17 @@ public sealed class SnippetService
     {
         try
         {
-            if (File.Exists(AppPaths.SnippetsFile))
+            // 破損時はバックアップから復帰する
+            var json = SafeFile.ReadAllText(AppPaths.SnippetsFile, IsValidJson);
+            if (json != null)
             {
-                var json = File.ReadAllText(AppPaths.SnippetsFile);
                 lock (_sync)
                     _entries = JsonSerializer.Deserialize<List<SnippetEntry>>(json, JsonOptions) ?? new();
+            }
+            else if (File.Exists(AppPaths.SnippetsFile))
+            {
+                _log.Error("定型文ファイルが読み取れませんでした。内容が失われないよう、空の状態では上書きしません");
+                _loadFailed = true;
             }
         }
         catch (Exception ex)
@@ -88,10 +101,15 @@ public sealed class SnippetService
 
     private void Save()
     {
+        if (_loadFailed)
+        {
+            _log.Warn("定型文の読み込みに失敗しているため、保存を見送りました");
+            return;
+        }
         try
         {
             AppPaths.EnsureDirectories();
-            File.WriteAllText(AppPaths.SnippetsFile, JsonSerializer.Serialize(_entries, JsonOptions));
+            SafeFile.WriteAllText(AppPaths.SnippetsFile, JsonSerializer.Serialize(_entries, JsonOptions));
         }
         catch (Exception ex)
         {

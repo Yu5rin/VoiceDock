@@ -31,13 +31,19 @@ public partial class App : Application
     private LogWindow? _logWindow;
     private UpdateWindow? _updateWindow;
 
+    /// <summary>起動時の確認で見つかった更新（トレイから開くまで保持する）。</summary>
+    private UpdateInfo? _pendingUpdate;
+
     protected override void OnStartup(StartupEventArgs e)
     {
         base.OnStartup(e);
 
-        // 二重起動制御: 既に起動中なら既存インスタンスへ通知して終了する
+        // 二重起動制御: 既に起動中なら既存インスタンスへ通知して終了する。
+        // 更新直後の再起動では、旧バージョンがまだ終了しきっていないため待ってから判定する
+        // （待たないと、更新のたびにアプリがトレイから消えてしまう）
+        bool afterUpdate = e.Args.Contains(UpdateService.AfterUpdateArgument);
         _instanceGuard = new SingleInstanceGuard();
-        if (!_instanceGuard.TryAcquire())
+        if (!_instanceGuard.TryAcquire(afterUpdate ? UpdateService.AfterUpdateWait : TimeSpan.Zero))
         {
             Shutdown();
             return;
@@ -55,6 +61,13 @@ public partial class App : Application
         _settings = new SettingsService(_log);
         _settings.Load();
 
+        // 認識テキストをファイルに残すかは設定に従う（既定は残さない）
+        _log.PersistRecognitionText = _settings.Current.LogRecognitionText;
+        _settings.Changed += s => _log!.PersistRecognitionText = s.LogRecognitionText;
+
+        if (_settings.RecoveredFromBackup)
+            ToastWindow.Show("設定ファイルが読み取れなかったため、初期設定で起動しました。", ToastKind.Warning);
+
         _dictionary = new DictionaryService(_log);
         _dictionary.Load();
 
@@ -66,7 +79,12 @@ public partial class App : Application
         _tray.DictionaryRequested += ShowDictionary;
         _tray.SnippetRequested += ShowSnippets;
         _tray.LogRequested += ShowLog;
-        _tray.UpdateCheckRequested += () => _ = CheckForUpdateAsync(manual: true);
+        _tray.UpdateCheckRequested += () =>
+        {
+            // 起動時に見つけた更新があれば、通信し直さずそのまま案内画面を出す
+            if (_pendingUpdate != null) ShowUpdateWindow(_pendingUpdate);
+            else _ = CheckForUpdateAsync(manual: true);
+        };
         _tray.ExitRequested += ExitApplication;
 
         // 前回の更新で残ったファイルを片付ける
@@ -77,12 +95,18 @@ public partial class App : Application
 
         // 認識ブリッジ（ローカルサーバー）を起動し、認識用ブラウザ(Edge)を裏で立ち上げる
         _bridge = new SpeechBridgeServer(_log);
-        _bridge.Ready += () => _log.Info("認識エンジンの準備が完了しました");
+        _bridge.Ready += () => Dispatcher.BeginInvoke(() =>
+        {
+            _log!.Info("認識エンジンの準備が完了しました");
+            // 起動直後は認識できないため、準備が整ったことをトレイに反映する
+            _tray?.SetState(TrayState.Idle);
+        });
         try
         {
             _bridge.Start();
             _browser = new BrowserLauncher(_log, _settings);
-            if (!_browser.Launch(_bridge.PageUrl))
+            _browser.KillOrphanedBrowser();
+            if (!_browser.Launch(_bridge.IssuePageUrl))
             {
                 _tray.SetState(TrayState.Error);
                 ToastWindow.Show("認識用ブラウザ (Edge/Chrome) が見つからず、音声認識を利用できません。", ToastKind.Error);
@@ -92,7 +116,7 @@ public partial class App : Application
         {
             _log.Error($"認識ブリッジの初期化に失敗しました: {ex.Message}");
             _tray.SetState(TrayState.Error);
-            ToastWindow.Show($"認識エンジンの初期化に失敗しました: {ex.Message}", ToastKind.Error);
+            ToastWindow.Show($"認識エンジンを開始できませんでした。{UserMessage.Describe(ex)}", ToastKind.Error);
         }
 
         var processor = new TextProcessor(_settings, _dictionary, _snippets);
@@ -108,8 +132,17 @@ public partial class App : Application
         };
         _watchdog.Tick += (_, _) =>
         {
-            if (_browser is { IsRunning: false })
-                _browser.Relaunch();
+            if (_browser is not { IsRunning: false }) return;
+
+            // 起動できない環境で無限に再試行しないよう、上限に達したら監視を止める
+            if (_browser.GaveUp)
+            {
+                _watchdog!.Stop();
+                _tray!.SetState(TrayState.Error);
+                ToastWindow.Show("認識用ブラウザを起動できないため、音声入力を利用できません。設定から使用ブラウザをご確認ください。", ToastKind.Error);
+                return;
+            }
+            _browser.Relaunch();
         };
         _watchdog.Start();
 
@@ -139,11 +172,14 @@ public partial class App : Application
             _log.Warn($"ホットキー設定 \"{_settings.Current.Hotkey}\" を解釈できませんでした");
         }
 
-        // 取り消しホットキー（衝突しても録音側には影響しないため、ログのみ）
-        if (HotkeySpec.TryParse(_settings.Current.UndoHotkey, out var undoSpec))
+        // 取り消しホットキー。押しても無反応な理由が分かるよう、衝突時は通知する
+        if (_settings.Current.UndoEnabled && HotkeySpec.TryParse(_settings.Current.UndoHotkey, out var undoSpec))
         {
             if (!_hotkey.TryRegisterUndo(undoSpec))
+            {
                 _log.Warn($"取り消しホットキー {undoSpec} は他のアプリと衝突しているため登録できませんでした");
+                ToastWindow.Show($"取り消しのホットキー {undoSpec} は他のアプリと衝突しているため使えません。設定画面から変更してください。", ToastKind.Warning);
+            }
         }
 
         // 設定変更（操作方式）を即座にホットキー側へ反映する
@@ -183,7 +219,17 @@ public partial class App : Application
     {
         if (_updater == null) return;
 
-        var info = await _updater.CheckForUpdateAsync();
+        // 連打された場合は最初の 1 回だけ通す
+        if (_updater.IsChecking)
+        {
+            if (manual) ToastWindow.Show("更新を確認しています…");
+            return;
+        }
+
+        // 待たされていることが分かるようにする（手動実行時は無反応だと固まって見える）
+        if (manual) ToastWindow.Show("更新を確認しています…");
+
+        var info = await _updater.CheckForUpdateAsync(ignoreSkipped: manual);
 
         await Dispatcher.BeginInvoke(() =>
         {
@@ -194,15 +240,31 @@ public partial class App : Application
                 return;
             }
 
-            if (_updateWindow is { IsLoaded: true })
+            // 起動時の自動確認でウィンドウを前面に出すと、作業中に割り込んでしまう。
+            // 自動のときは通知だけにとどめ、開くかどうかは利用者に委ねる。
+            if (!manual)
             {
-                _updateWindow.Activate();
+                _pendingUpdate = info;
+                _tray?.SetUpdateAvailable(true);
+                ToastWindow.Show($"新しいバージョン {info.Version} が利用できます。トレイメニューの「更新を確認」から更新できます。");
                 return;
             }
-            _updateWindow = new UpdateWindow(_updater, info, ExitApplication);
-            _updateWindow.Show();
-            _updateWindow.Activate();
+
+            ShowUpdateWindow(info);
         });
+    }
+
+    private void ShowUpdateWindow(UpdateInfo info)
+    {
+        if (_updater == null) return;
+        if (_updateWindow is { IsLoaded: true })
+        {
+            _updateWindow.Activate();
+            return;
+        }
+        _updateWindow = new UpdateWindow(_updater, info, _settings!, ExitApplication);
+        _updateWindow.Show();
+        _updateWindow.Activate();
     }
 
     /// <summary>設定画面からのホットキー変更。衝突時は元のホットキーへ復元し false を返す。</summary>
@@ -285,7 +347,7 @@ public partial class App : Application
             _dictionaryWindow.Activate();
             return;
         }
-        _dictionaryWindow = new DictionaryWindow(_dictionary);
+        _dictionaryWindow = new DictionaryWindow(_dictionary, _log!);
         _dictionaryWindow.Show();
         _dictionaryWindow.Activate();
     }

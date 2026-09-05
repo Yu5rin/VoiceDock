@@ -36,7 +36,8 @@
         </StackPanel>
 
         <StackPanel Grid.Row="4" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,16,0,0">
-            <Button x:Name="ReleasePageButton" Content="リリースページを開く" Click="ReleasePage_Click"/>
+            <Button x:Name="SkipButton" Content="この版はスキップ" Click="Skip_Click"/>
+            <Button x:Name="ReleasePageButton" Content="リリースページを開く" Margin="8,0,0,0" Click="ReleasePage_Click"/>
             <Button x:Name="UpdateButton" Content="今すぐ更新" Margin="8,0,0,0" Click="Update_Click"/>
             <Button x:Name="CloseButton" Content="あとで" Margin="8,0,0,0" Click="Close_Click"/>
         </StackPanel>

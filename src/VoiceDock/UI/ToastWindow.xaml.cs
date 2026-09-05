@@ -17,6 +17,12 @@ public partial class ToastWindow : Window
 {
     private static readonly TimeSpan Duration = TimeSpan.FromSeconds(4);
 
+    /// <summary>同時に出す上限。これを超えたら古いものから閉じる。</summary>
+    private const int MaxVisible = 4;
+
+    /// <summary>表示中のトースト。同じ位置に重ねないよう、下から順に積むために保持する。</summary>
+    private static readonly List<ToastWindow> Visible = new();
+
     private ToastWindow(string message, ToastKind kind)
     {
         InitializeComponent();
@@ -44,17 +50,31 @@ public partial class ToastWindow : Window
 
     private void ShowToast()
     {
+        // 同時に出しすぎると読めないため、古いものから閉じる
+        while (Visible.Count >= MaxVisible)
+        {
+            var oldest = Visible[0];
+            Visible.RemoveAt(0);
+            try { oldest.Close(); } catch { /* 既に閉じている場合は無視 */ }
+        }
+
         Show();
         UpdateLayout();
+        Visible.Add(this);
+        Closed += (_, _) =>
+        {
+            Visible.Remove(this);
+            Restack();
+        };
 
-        var area = SystemParameters.WorkArea;
-        Left = area.Right - ActualWidth - 16;
-        Top = area.Bottom - ActualHeight - 16;
+        Restack();
 
         BeginAnimation(OpacityProperty,
             new DoubleAnimation(0, 1, TimeSpan.FromMilliseconds(160)) { EasingFunction = new QuadraticEase() });
 
-        var timer = new DispatcherTimer { Interval = Duration };
+        // 長い文章ほど読む時間が要るため、文字数に応じて表示時間を伸ばす
+        var duration = Duration + TimeSpan.FromMilliseconds(Math.Min(4000, MessageText.Text.Length * 60));
+        var timer = new DispatcherTimer { Interval = duration };
         timer.Tick += (_, _) =>
         {
             timer.Stop();
@@ -63,6 +83,23 @@ public partial class ToastWindow : Window
             BeginAnimation(OpacityProperty, fadeOut);
         };
         timer.Start();
+    }
+
+    /// <summary>表示中のトーストを、画面右下から上へ順に積み直す。</summary>
+    private static void Restack()
+    {
+        var area = SystemParameters.WorkArea;
+        double bottom = area.Bottom - 16;
+
+        // 新しいものが下に来るよう、末尾から積む
+        for (int i = Visible.Count - 1; i >= 0; i--)
+        {
+            var toast = Visible[i];
+            if (!toast.IsLoaded) continue;
+            toast.Left = area.Right - toast.ActualWidth - 16;
+            toast.Top = bottom - toast.ActualHeight;
+            bottom -= toast.ActualHeight + 8;
+        }
     }
 
     private void ApplyNoActivateStyle()

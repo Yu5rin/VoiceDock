@@ -10,6 +10,10 @@
     <Color x:Key="SubFgColor">#FF9A9AA2</Color>
     <Color x:Key="AccentColor">#FFE5484D</Color>
     <Color x:Key="WarnColor">#FFE5A33B</Color>
+    <!-- 半透明の面（オーバーレイ・トーストの背景）。各画面でハードコードせずここに集約する -->
+    <Color x:Key="ScrimColor">#E51B1B1F</Color>
+    <Color x:Key="ToastColor">#F0232328</Color>
+    <Color x:Key="AltRowColor">#FF2A2A31</Color>
 
     <SolidColorBrush x:Key="BgBrush" Color="{StaticResource BgColor}"/>
     <SolidColorBrush x:Key="PanelBrush" Color="{StaticResource PanelColor}"/>
@@ -19,6 +23,9 @@
     <SolidColorBrush x:Key="SubFgBrush" Color="{StaticResource SubFgColor}"/>
     <SolidColorBrush x:Key="AccentBrush" Color="{StaticResource AccentColor}"/>
     <SolidColorBrush x:Key="WarnBrush" Color="{StaticResource WarnColor}"/>
+    <SolidColorBrush x:Key="ScrimBrush" Color="{StaticResource ScrimColor}"/>
+    <SolidColorBrush x:Key="ToastBrush" Color="{StaticResource ToastColor}"/>
+    <SolidColorBrush x:Key="AltRowBrush" Color="{StaticResource AltRowColor}"/>
 
     <FontFamily x:Key="AppFont">Yu Gothic UI, Yu Gothic, Meiryo UI, sans-serif</FontFamily>
 
@@ -74,7 +81,10 @@
                             <Setter TargetName="Bd" Property="Background" Value="#FF44444C"/>
                         </Trigger>
                         <Trigger Property="IsEnabled" Value="False">
-                            <Setter Property="Opacity" Value="0.4"/>
+                            <!-- 0.4 では暗い背景で判読しづらいため、文字色を落として表現する -->
+                            <Setter Property="Opacity" Value="0.7"/>
+                            <Setter Property="Foreground" Value="{StaticResource SubFgBrush}"/>
+                            <Setter TargetName="Bd" Property="Background" Value="{StaticResource PanelBrush}"/>
                         </Trigger>
                     </ControlTemplate.Triggers>
                 </ControlTemplate>
@@ -219,7 +229,7 @@
         <Setter Property="BorderBrush" Value="{StaticResource BorderBrush}"/>
         <Setter Property="BorderThickness" Value="1"/>
         <Setter Property="RowBackground" Value="{StaticResource PanelBrush}"/>
-        <Setter Property="AlternatingRowBackground" Value="#FF26262C"/>
+        <Setter Property="AlternatingRowBackground" Value="{StaticResource AltRowBrush}"/>
         <Setter Property="GridLinesVisibility" Value="Horizontal"/>
         <Setter Property="HorizontalGridLinesBrush" Value="{StaticResource BorderBrush}"/>
         <Setter Property="HeadersVisibility" Value="Column"/>
@@ -253,6 +263,38 @@
                 <Setter Property="Background" Value="#FF34343C"/>
             </Trigger>
         </Style.Triggers>
+    </Style>
+
+    <!-- 設定画面のタブ（縦一本のスクロールだと目的の項目に辿り着きにくいため） -->
+    <Style TargetType="TabControl">
+        <Setter Property="Background" Value="{StaticResource BgBrush}"/>
+        <Setter Property="BorderThickness" Value="0"/>
+        <Setter Property="Padding" Value="0"/>
+    </Style>
+
+    <Style TargetType="TabItem">
+        <Setter Property="Foreground" Value="{StaticResource SubFgBrush}"/>
+        <Setter Property="Cursor" Value="Hand"/>
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="TabItem">
+                    <Border x:Name="Bd" Background="Transparent" Padding="12,7" Margin="0,0,4,0"
+                            CornerRadius="4,4,0,0" BorderThickness="0,0,0,2" BorderBrush="Transparent">
+                        <ContentPresenter ContentSource="Header"/>
+                    </Border>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="IsSelected" Value="True">
+                            <Setter TargetName="Bd" Property="BorderBrush" Value="{StaticResource AccentBrush}"/>
+                            <Setter TargetName="Bd" Property="Background" Value="{StaticResource PanelBrush}"/>
+                            <Setter Property="Foreground" Value="{StaticResource FgBrush}"/>
+                        </Trigger>
+                        <Trigger Property="IsMouseOver" Value="True">
+                            <Setter TargetName="Bd" Property="Background" Value="{StaticResource ControlBrush}"/>
+                        </Trigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
     </Style>
 
 </ResourceDictionary>

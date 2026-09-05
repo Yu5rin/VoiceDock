@@ -7,7 +7,7 @@
         Topmost="True" ShowInTaskbar="False" ShowActivated="False"
         Focusable="False" ResizeMode="NoResize" Opacity="0">
     <!-- 録音中のみ表示する細長いバー形状のオーバーレイ。認識中テキストをライブ表示する -->
-    <Border CornerRadius="26" Background="#E51B1B1F" BorderBrush="#FF3C3C44" BorderThickness="1">
+    <Border CornerRadius="26" Background="{DynamicResource ScrimBrush}" BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1">
         <Grid Margin="18,0,20,0">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="Auto"/>
@@ -17,9 +17,9 @@
 
             <!-- マイクアイコン（録音中はアクセントカラー） -->
             <Canvas Grid.Column="0" Width="20" Height="24" VerticalAlignment="Center" Margin="0,0,12,0">
-                <Path Fill="#FFE5484D"
+                <Path Fill="{DynamicResource AccentBrush}"
                       Data="M 7,2 A 3,3 0 0 1 13,2 L 13,10 A 3,3 0 0 1 7,10 Z"/>
-                <Path Stroke="#FFE5484D" StrokeThickness="1.8" StrokeStartLineCap="Round" StrokeEndLineCap="Round"
+                <Path Stroke="{DynamicResource AccentBrush}" StrokeThickness="1.8" StrokeStartLineCap="Round" StrokeEndLineCap="Round"
                       Data="M 4,9 A 6,6 0 0 0 16,9 M 10,15 L 10,19 M 6,19 L 14,19"/>
             </Canvas>
 
@@ -31,7 +31,7 @@
                 <TextBlock x:Name="PartialTextBlock"
                            VerticalAlignment="Center" HorizontalAlignment="Right"
                            FontFamily="Yu Gothic UI, Yu Gothic, Meiryo UI, sans-serif" FontSize="13"
-                           Foreground="#FFC9C9CE" Text=""/>
+                           Foreground="{DynamicResource SubFgBrush}" Text=""/>
             </Grid>
         </Grid>
     </Border>

@@ -74,6 +74,7 @@ public partial class SettingsWindow : Window
         UndoCheck.IsChecked = settings.Current.UndoEnabled;
         SoundCheck.IsChecked = settings.Current.SoundFeedback;
         LocalRecognitionCheck.IsChecked = settings.Current.PreferLocalRecognition;
+        LogRecognitionCheck.IsChecked = settings.Current.LogRecognitionText;
 
         UpdateModeCombo.Items.Add("起動のたびに確認する（推奨）");
         UpdateModeCombo.Items.Add("起動時に確認する（1 日 1 回まで）");
@@ -126,6 +127,7 @@ public partial class SettingsWindow : Window
             s.UndoEnabled = UndoCheck.IsChecked == true;
             s.SoundFeedback = SoundCheck.IsChecked == true;
             s.PreferLocalRecognition = LocalRecognitionCheck.IsChecked == true;
+            s.LogRecognitionText = LogRecognitionCheck.IsChecked == true;
         });
     }
 
@@ -192,6 +194,18 @@ public partial class SettingsWindow : Window
 
     private void CheckUpdate_Click(object sender, RoutedEventArgs e) => _checkUpdate();
 
+    private void Reset_Click(object sender, RoutedEventArgs e)
+    {
+        var answer = MessageBox.Show(this,
+            "すべての設定を初期状態に戻します。辞書と定型文は削除されません。\n続けますか？",
+            "設定の初期化", MessageBoxButton.OKCancel, MessageBoxImage.Warning, MessageBoxResult.Cancel);
+        if (answer != MessageBoxResult.OK) return;
+
+        _settings.ResetToDefaults();
+        ToastWindow.Show("設定を初期状態に戻しました。ホットキーなど一部はアプリの再起動で反映されます。");
+        Close();
+    }
+
     private void OpenSnippets_Click(object sender, RoutedEventArgs e) => _openSnippets();
 
     private void OpenAppRules_Click(object sender, RoutedEventArgs e) => _openAppRules();
@@ -243,7 +257,7 @@ public partial class SettingsWindow : Window
         }
         catch (Exception ex)
         {
-            ToastWindow.Show($"スタートアップ登録の変更に失敗しました: {ex.Message}", ToastKind.Error);
+            ToastWindow.Show($"スタートアップ登録を変更できませんでした。{UserMessage.Describe(ex)}", ToastKind.Error);
         }
     }
 

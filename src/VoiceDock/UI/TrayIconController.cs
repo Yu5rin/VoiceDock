@@ -5,12 +5,13 @@ namespace VoiceDock.UI;
 
 /// <summary>
 /// タスクトレイ常駐アイコン。状態に応じて色を変え、
-/// 右クリックメニュー（設定 / 辞書管理 / ログ表示 / 終了）を提供する。
+/// 右クリックメニュー（音声入力 / 設定 / 辞書管理 / 定型文 / ログ / 更新 / 終了）を提供する。
 /// </summary>
 public sealed class TrayIconController : IDisposable
 {
     private readonly NotifyIcon _notifyIcon;
     private readonly ToolStripMenuItem _recordItem;
+    private readonly ToolStripMenuItem _updateItem;
 
     public event Action? RecordToggleRequested;
     public event Action? UndoRequested;
@@ -28,7 +29,7 @@ public sealed class TrayIconController : IDisposable
             Renderer = new DarkMenuRenderer(),
             ShowImageMargin = false,
         };
-        _recordItem = CreateItem("録音開始", () => RecordToggleRequested?.Invoke());
+        _recordItem = CreateItem("音声入力を開始", () => RecordToggleRequested?.Invoke());
         menu.Items.Add(_recordItem);
         menu.Items.Add(CreateItem("直前の入力を取り消す", () => UndoRequested?.Invoke()));
         menu.Items.Add(new ToolStripSeparator());
@@ -37,13 +38,14 @@ public sealed class TrayIconController : IDisposable
         menu.Items.Add(CreateItem("定型文", () => SnippetRequested?.Invoke()));
         menu.Items.Add(CreateItem("ログ表示", () => LogRequested?.Invoke()));
         menu.Items.Add(new ToolStripSeparator());
-        menu.Items.Add(CreateItem("更新を確認", () => UpdateCheckRequested?.Invoke()));
+        _updateItem = CreateItem("更新を確認", () => UpdateCheckRequested?.Invoke());
+        menu.Items.Add(_updateItem);
         menu.Items.Add(CreateItem("終了", () => ExitRequested?.Invoke()));
 
         _notifyIcon = new NotifyIcon
         {
             Icon = IconFactory.Get(TrayState.Idle),
-            Text = "VoiceDock - 待機中",
+            Text = "VoiceDock - 準備中…",
             Visible = true,
             ContextMenuStrip = menu,
         };
@@ -57,10 +59,16 @@ public sealed class TrayIconController : IDisposable
         return item;
     }
 
-    /// <summary>録音状態に応じてメニューの「録音開始/停止」表記を切り替える。</summary>
+    /// <summary>状態に応じてメニューの「音声入力を開始/停止」表記を切り替える。</summary>
     public void SetListening(bool listening)
     {
-        _recordItem.Text = listening ? "録音停止" : "録音開始";
+        _recordItem.Text = listening ? "音声入力を停止" : "音声入力を開始";
+    }
+
+    /// <summary>更新が見つかっていることをメニュー上で示す。</summary>
+    public void SetUpdateAvailable(bool available)
+    {
+        _updateItem.Text = available ? "更新があります（クリックで詳細）" : "更新を確認";
     }
 
     public void SetState(TrayState state, string? tooltip = null)
@@ -68,7 +76,7 @@ public sealed class TrayIconController : IDisposable
         _notifyIcon.Icon = IconFactory.Get(state);
         var text = tooltip ?? state switch
         {
-            TrayState.Recording => "VoiceDock - 録音中",
+            TrayState.Recording => "VoiceDock - 音声入力中",
             TrayState.Error => "VoiceDock - エラー",
             _ => "VoiceDock - 待機中",
         };

@@ -52,13 +52,18 @@ public partial class AppRulesWindow : Window
         foreach (var kv in settings.Current.AppInputMethods.OrderBy(k => k.Key))
             _rows.Add(CreateRow(kv.Key, kv.Value));
         Grid.ItemsSource = _rows;
+        _rows.CollectionChanged += (_, _) => UpdateEmptyState();
 
         // 入力先として使ったことのあるアプリを候補に出す（未登録のもののみ）
         foreach (var app in knownApps.Where(a => !settings.Current.AppInputMethods.ContainsKey(a)))
             AppCombo.Items.Add(app);
 
         _loading = false;
+        UpdateEmptyState();
     }
+
+    private void UpdateEmptyState() =>
+        EmptyText.Visibility = _rows.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
 
     private Row CreateRow(string appName, InputMethod method) => new()
     {

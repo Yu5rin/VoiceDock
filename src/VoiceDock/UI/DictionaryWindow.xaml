@@ -20,16 +20,23 @@
                    Text="誤認識語 → 正しい語 の対応を登録します。登録単語は認識ヒント(initial_prompt)にも使われます。Excel から 2 列のセル範囲をコピーして、この表に Ctrl+V で貼り付けできます。"/>
 
         <!-- 大量登録を想定した 2 列テーブル形式 -->
-        <DataGrid Grid.Row="2" x:Name="Grid"
+        <Grid Grid.Row="2">
+            <DataGrid x:Name="Grid"
                   AutoGenerateColumns="False" CanUserAddRows="True"
                   CanUserSortColumns="False" CanUserReorderColumns="False"
                   SelectionUnit="CellOrRowHeader"
                   Background="{StaticResource PanelBrush}">
-            <DataGrid.Columns>
-                <DataGridTextColumn Header="誤認識語" Binding="{Binding Wrong, UpdateSourceTrigger=PropertyChanged}" Width="*"/>
-                <DataGridTextColumn Header="正しい語" Binding="{Binding Correct, UpdateSourceTrigger=PropertyChanged}" Width="*"/>
+                <DataGrid.Columns>
+                    <DataGridTextColumn Header="誤認識語" Binding="{Binding Wrong, UpdateSourceTrigger=PropertyChanged}" Width="*"/>
+                    <DataGridTextColumn Header="正しい語" Binding="{Binding Correct, UpdateSourceTrigger=PropertyChanged}" Width="*"/>
             </DataGrid.Columns>
-        </DataGrid>
+            </DataGrid>
+            <!-- 0 件のときに真っ白にならないよう、何をすべきかを示す -->
+            <TextBlock x:Name="EmptyText" Style="{StaticResource SubText}"
+                       HorizontalAlignment="Center" VerticalAlignment="Center"
+                       TextAlignment="Center" IsHitTestVisible="False" Visibility="Collapsed"
+                       Text="まだ登録がありません。下の行に「誤認識語」と「正しい語」を入力するか、Excel から 2 列を貼り付けてください。"/>
+        </Grid>
 
         <StackPanel Grid.Row="3" Orientation="Horizontal" Margin="0,12,0,0">
             <Button Content="行を削除" Click="DeleteRows_Click"/>

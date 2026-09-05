@@ -26,15 +26,23 @@
                       SelectionChanged="FilterCombo_SelectionChanged"/>
         </Grid>
 
-        <ListBox Grid.Row="2" x:Name="LogList"
-                 FontFamily="Consolas, Yu Gothic UI"
-                 SelectionMode="Extended"
-                 ScrollViewer.HorizontalScrollBarVisibility="Auto"
-                 VirtualizingPanel.IsVirtualizing="True"/>
+        <Grid Grid.Row="2">
+            <ListBox x:Name="LogList"
+                     FontFamily="Consolas, Yu Gothic UI"
+                     SelectionMode="Extended"
+                     ScrollViewer.HorizontalScrollBarVisibility="Auto"
+                     VirtualizingPanel.IsVirtualizing="True"/>
+            <!-- 0 件のときに何も出ないと不安になるため、状態を明示する -->
+            <TextBlock x:Name="EmptyText" Style="{StaticResource SubText}"
+                       HorizontalAlignment="Center" VerticalAlignment="Center"
+                       TextAlignment="Center" Visibility="Collapsed"
+                       Text="表示できるログがありません。"/>
+        </Grid>
 
         <StackPanel Grid.Row="3" Orientation="Horizontal" Margin="0,12,0,0">
             <Button Content="選択行をコピー" Click="CopySelected_Click"/>
             <Button Content="ログフォルダを開く" Margin="8,0,0,0" Click="OpenFolder_Click"/>
+            <Button Content="ログをすべて削除" Margin="8,0,0,0" Click="DeleteLogs_Click"/>
         </StackPanel>
     </Grid>
 </Window>

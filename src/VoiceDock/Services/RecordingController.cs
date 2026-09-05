@@ -29,8 +29,15 @@ public sealed class RecordingController : IDisposable
     private bool _localModeNotified;
     private bool _localFallbackNotified;
 
-    /// <summary>直前に入力したテキストの文字数（取り消し用）。0 なら取り消す対象なし。</summary>
+    /// <summary>
+    /// 直前に入力したテキストの「見た目の文字数」（取り消し用）。0 なら取り消す対象なし。
+    /// 絵文字などのサロゲートペアは 2 つの char で 1 文字のため、char 数ではなく
+    /// 書記素（text element）数で数える。そうしないと BackSpace を余分に送ってしまう。
+    /// </summary>
     private int _lastInjectedLength;
+
+    /// <summary>直前に入力した先のアプリ（プロセス名）。別アプリでの誤爆を防ぐために使う。</summary>
+    private string _lastInjectedApp = "";
 
     /// <summary>入力先として観測したアプリ（プロセス名）。アプリ別設定の候補に使う。</summary>
     private readonly SortedSet<string> _seenApps = new(StringComparer.OrdinalIgnoreCase);
@@ -125,8 +132,8 @@ public sealed class RecordingController : IDisposable
     {
         if (!_bridge.IsConnected)
         {
-            _log.Warn("認識ブラウザが未接続のため録音を開始できません");
-            ToastWindow.Show("認識エンジンの準備がまだ完了していません。数秒待って再度お試しください。", ToastKind.Warning);
+            _log.Warn("認識ブラウザが未接続のため音声入力を開始できません");
+            ToastWindow.Show("認識エンジンの準備中です。数秒待ってからお試しください。", ToastKind.Warning);
             return;
         }
 
@@ -136,7 +143,7 @@ public sealed class RecordingController : IDisposable
         _overlay.ShowOverlay();
         ResetSilenceTimer();
         if (_settings.Current.SoundFeedback) SoundFeedback.PlayStart();
-        _log.Info("録音を開始しました");
+        _log.Info("音声入力を開始しました");
         ListeningChanged?.Invoke(true);
     }
 
@@ -149,7 +156,7 @@ public sealed class RecordingController : IDisposable
         _overlay.HideOverlay();
         _tray.SetState(TrayState.Idle);
         if (_settings.Current.SoundFeedback) SoundFeedback.PlayStop();
-        _log.Info($"録音を停止しました ({reason})");
+        _log.Info($"音声入力を停止しました ({reason})");
         ListeningChanged?.Invoke(false);
     }
 
@@ -210,10 +217,21 @@ public sealed class RecordingController : IDisposable
         {
             _log.Info("テキスト入力欄が見つからないため流し込みをスキップしました");
             _lastInjectedLength = 0;
+            _lastInjectedApp = "";
             return;
         }
 
-        _lastInjectedLength = text.Length;
+        _lastInjectedLength = CountTextElements(text);
+        _lastInjectedApp = app;
+    }
+
+    /// <summary>絵文字・結合文字を 1 文字として数える（BackSpace の回数に合わせるため）。</summary>
+    private static int CountTextElements(string text)
+    {
+        var enumerator = System.Globalization.StringInfo.GetTextElementEnumerator(text);
+        int count = 0;
+        while (enumerator.MoveNext()) count++;
+        return count;
     }
 
     /// <summary>アプリ別の入力方式の上書きがあればそれを、無ければ既定の入力方式を返す。</summary>
@@ -236,6 +254,18 @@ public sealed class RecordingController : IDisposable
             if (count <= 0)
             {
                 _log.Info("取り消せる入力がありません");
+                ToastWindow.Show("取り消せる入力がありません。");
+                return;
+            }
+
+            // 入力した直後に別のアプリへ移っている場合、そこで BackSpace を送ると
+            // 無関係な文字を消してしまう。入力先が変わっていたら取り消さない。
+            var current = TextInjector.GetForegroundProcessName();
+            if (_lastInjectedApp.Length > 0 &&
+                !string.Equals(current, _lastInjectedApp, StringComparison.OrdinalIgnoreCase))
+            {
+                _log.Info($"入力先が変わっているため取り消しを中止しました（入力時: {_lastInjectedApp} / 現在: {current}）");
+                ToastWindow.Show($"入力したアプリ（{_lastInjectedApp}）が前面にないため、取り消しを中止しました。", ToastKind.Warning);
                 return;
             }
 
@@ -246,6 +276,7 @@ public sealed class RecordingController : IDisposable
 
             // 二重に取り消さないようクリアする
             _lastInjectedLength = 0;
+            _lastInjectedApp = "";
         }));
     }
 
@@ -329,7 +360,7 @@ public sealed class RecordingController : IDisposable
                 lock (_sync)
                 {
                     if (!_listening) return;
-                    _log.Info("30 秒間無音が続いたため録音を自動停止します");
+                    _log.Info("30 秒間無音が続いたため音声入力を自動停止します");
                     StopListening("無音自動停止");
                 }
             };

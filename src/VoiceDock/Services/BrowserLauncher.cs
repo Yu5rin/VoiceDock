@@ -14,10 +14,17 @@ namespace VoiceDock.Services;
 /// </summary>
 public sealed class BrowserLauncher : IDisposable
 {
+    /// <summary>再起動を諦めるまでの回数。無いと起動できない環境で永久にプロセス生成を試みてしまう。</summary>
+    private const int MaxRelaunchAttempts = 5;
+
     private readonly LogService _log;
     private readonly SettingsService _settings;
     private Process? _process;
-    private string? _url;
+    private Func<string>? _urlFactory;
+    private int _relaunchAttempts;
+
+    /// <summary>再起動の上限に達したかどうか（呼び出し側が監視を止めるために見る）。</summary>
+    public bool GaveUp => _relaunchAttempts >= MaxRelaunchAttempts;
 
     /// <summary>実際に起動したブラウザの表示名（未起動なら null）。</summary>
     public string? LaunchedBrowserName { get; private set; }
@@ -41,7 +48,9 @@ public sealed class BrowserLauncher : IDisposable
     /// <summary>前回と同じ URL でブラウザを再起動する（ウォッチドッグ用）。</summary>
     public bool Relaunch()
     {
-        if (_url == null) return false;
+        if (_urlFactory == null) return false;
+        if (GaveUp) return false;
+        _relaunchAttempts++;
         try
         {
             if (_process is { HasExited: false })
@@ -50,14 +59,23 @@ public sealed class BrowserLauncher : IDisposable
         catch { /* 終了失敗は無視して再起動を試みる */ }
         _process?.Dispose();
         _process = null;
-        _log.Warn("認識用ブラウザが停止していたため再起動します");
-        return Launch(_url);
+        _log.Warn($"認識用ブラウザが停止していたため再起動します（{_relaunchAttempts}/{MaxRelaunchAttempts} 回目）");
+        // 認識ページのトークンは使い捨てのため、再起動時は新しい URL を発行する
+        bool ok = Launch(_urlFactory);
+        if (!ok && GaveUp)
+            _log.Error("認識用ブラウザを繰り返し起動できなかったため、自動再起動を停止しました");
+        return ok;
     }
 
     /// <summary>設定に応じたブラウザを起動して認識ページを開く。起動できたら true。</summary>
-    public bool Launch(string url)
+    /// <param name="urlFactory">
+    /// 読み込ませる URL を生成する関数。認識ページのトークンは 1 回限り有効なため、
+    /// 再起動のたびに新しい URL を発行できるよう関数で受け取る。
+    /// </param>
+    public bool Launch(Func<string> urlFactory)
     {
-        _url = url;
+        _urlFactory = urlFactory;
+        var url = urlFactory();
         var (exe, name) = ResolveBrowser();
         if (exe == null)
         {
@@ -96,6 +114,12 @@ public sealed class BrowserLauncher : IDisposable
         try
         {
             _process = Process.Start(psi);
+            if (_process != null)
+            {
+                _relaunchAttempts = 0;
+                // 異常終了時に取り残されたブラウザを次回起動で片付けられるよう PID を残す
+                SaveLaunchedPid(_process.Id);
+            }
             _log.Info($"認識用ブラウザを起動しました: {name} ({Path.GetFileName(exe)})");
             return _process != null;
         }
@@ -181,6 +205,56 @@ public sealed class BrowserLauncher : IDisposable
         }
     }
 
+    /// <summary>
+    /// 前回の実行で取り残された認識用ブラウザを終了させる。
+    /// VoiceDock がクラッシュすると Dispose が走らず、画面外のブラウザが
+    /// マイクを掴んだまま残り続けるため、起動時に片付ける。
+    /// </summary>
+    public void KillOrphanedBrowser()
+    {
+        try
+        {
+            if (!File.Exists(PidFile)) return;
+            var text = File.ReadAllText(PidFile).Trim();
+            File.Delete(PidFile);
+            if (!int.TryParse(text, out int pid)) return;
+
+            using var proc = Process.GetProcessById(pid);
+            // PID は使い回されるため、ブラウザ以外を誤って終了させないよう名前で確認する
+            var name = proc.ProcessName;
+            if (!name.Equals("msedge", StringComparison.OrdinalIgnoreCase) &&
+                !name.Equals("chrome", StringComparison.OrdinalIgnoreCase))
+                return;
+
+            proc.Kill(entireProcessTree: true);
+            _log.Info("前回の実行で残っていた認識用ブラウザを終了しました");
+        }
+        catch
+        {
+            // 既に終了している場合は何もしない
+        }
+    }
+
+    private static string PidFile => Path.Combine(AppPaths.Root, "browser.pid");
+
+    private void SaveLaunchedPid(int pid)
+    {
+        try
+        {
+            AppPaths.EnsureDirectories();
+            File.WriteAllText(PidFile, pid.ToString());
+        }
+        catch
+        {
+            // 記録できなくても動作に支障はない
+        }
+    }
+
+    private static void ClearLaunchedPid()
+    {
+        try { if (File.Exists(PidFile)) File.Delete(PidFile); } catch { /* 無視 */ }
+    }
+
     private static string? FindEdge()
     {
         return FromAppPaths("msedge.exe")
@@ -227,5 +301,6 @@ public sealed class BrowserLauncher : IDisposable
             // 終了処理の失敗は無視
         }
         _process?.Dispose();
+        ClearLaunchedPid();
     }
 }

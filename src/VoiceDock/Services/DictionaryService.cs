@@ -26,6 +26,18 @@ public sealed class DictionaryService
     private readonly object _sync = new();
     private List<DictionaryEntry> _entries = new();
 
+    /// <summary>読み込みに失敗したかどうか。失敗時は空の内容で上書きしない。</summary>
+    private bool _loadFailed;
+
+    /// <summary>読み込みに失敗して内容を復元できなかった場合 true。</summary>
+    public bool LoadFailed => _loadFailed;
+
+    private static bool IsValidJson(string text)
+    {
+        try { using var _ = JsonDocument.Parse(text); return true; }
+        catch { return false; }
+    }
+
     public DictionaryService(LogService log)
     {
         _log = log;
@@ -40,11 +52,17 @@ public sealed class DictionaryService
     {
         try
         {
-            if (File.Exists(AppPaths.DictionaryFile))
+            // 破損時はバックアップから復帰する（辞書は再作成の手間が大きいため）
+            var json = SafeFile.ReadAllText(AppPaths.DictionaryFile, IsValidJson);
+            if (json != null)
             {
-                var json = File.ReadAllText(AppPaths.DictionaryFile);
                 lock (_sync)
                     _entries = JsonSerializer.Deserialize<List<DictionaryEntry>>(json, JsonOptions) ?? new();
+            }
+            else if (File.Exists(AppPaths.DictionaryFile))
+            {
+                _log.Error("辞書ファイルが読み取れませんでした。内容が失われないよう、空の状態では上書きしません");
+                _loadFailed = true;
             }
         }
         catch (Exception ex)
@@ -67,10 +85,16 @@ public sealed class DictionaryService
 
     private void Save()
     {
+        // 読み込みに失敗した状態で保存すると、壊れたファイルを空の内容で確定させてしまう
+        if (_loadFailed)
+        {
+            _log.Warn("辞書の読み込みに失敗しているため、保存を見送りました");
+            return;
+        }
         try
         {
             AppPaths.EnsureDirectories();
-            File.WriteAllText(AppPaths.DictionaryFile, JsonSerializer.Serialize(_entries, JsonOptions));
+            SafeFile.WriteAllText(AppPaths.DictionaryFile, JsonSerializer.Serialize(_entries, JsonOptions));
         }
         catch (Exception ex)
         {

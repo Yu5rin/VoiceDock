@@ -20,9 +20,30 @@ public sealed class SingleInstanceGuard : IDisposable
     /// <summary>既存インスタンスに対して 2 個目の起動が通知されたときに発火（リスナースレッド上）。</summary>
     public event Action? ActivationRequested;
 
-    public bool TryAcquire()
+    /// <summary>
+    /// 単独起動の権利を取得する。
+    /// </summary>
+    /// <param name="waitFor">
+    /// 既存インスタンスの終了を待つ時間。自動更新の直後は、旧バージョンがまだ終了しきって
+    /// いないうちに新バージョンが起動するため、待たずに諦めると「更新したらアプリが消える」
+    /// ことになる。そのため更新直後だけ待機してから判定する。
+    /// </param>
+    public bool TryAcquire(TimeSpan waitFor = default)
     {
-        _mutex = new Mutex(initiallyOwned: true, MutexName, out bool createdNew);
+        bool createdNew = TryCreateMutex();
+
+        if (!createdNew && waitFor > TimeSpan.Zero)
+        {
+            var deadline = DateTime.UtcNow + waitFor;
+            while (!createdNew && DateTime.UtcNow < deadline)
+            {
+                _mutex?.Dispose();
+                _mutex = null;
+                Thread.Sleep(200);
+                createdNew = TryCreateMutex();
+            }
+        }
+
         IsPrimaryInstance = createdNew;
         _activateEvent = new EventWaitHandle(false, EventResetMode.AutoReset, EventName);
 
@@ -36,6 +57,12 @@ public sealed class SingleInstanceGuard : IDisposable
             // 既存インスタンスへ通知して自分は終了する
             _activateEvent.Set();
         }
+        return createdNew;
+    }
+
+    private bool TryCreateMutex()
+    {
+        _mutex = new Mutex(initiallyOwned: true, MutexName, out bool createdNew);
         return createdNew;
     }
 

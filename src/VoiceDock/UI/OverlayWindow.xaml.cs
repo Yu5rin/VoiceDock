@@ -60,7 +60,11 @@ public partial class OverlayWindow : Window
     /// <summary>認識中（暫定）テキストを表示する。どのスレッドから呼んでもよい。</summary>
     public void SetPartialText(string text)
     {
-        Dispatcher.BeginInvoke(() => PartialTextBlock.Text = text);
+        // 幅が限られているため、長い発話は直近の部分だけを残す。
+        // 単に切れていると気づけないので、省略されたことが分かるようにする。
+        const int maxChars = 34;
+        var shown = text.Length > maxChars ? "…" + text[^maxChars..] : text;
+        Dispatcher.BeginInvoke(() => PartialTextBlock.Text = shown);
     }
 
     /// <summary>認識中テキストの表示をクリアする。</summary>
@@ -126,15 +130,18 @@ public partial class OverlayWindow : Window
         }
     }
 
-    /// <summary>マウスカーソルが存在するモニターの下部中央（ピクセル座標）に配置する。</summary>
+    /// <summary>
+    /// 入力先（前面ウィンドウ）があるモニターの下部中央に配置する。
+    /// カーソル位置を基準にすると、入力先が別モニターにある場合に
+    /// 関係ないモニターへ出てしまうため、前面ウィンドウを優先する。
+    /// </summary>
     private void PositionToCursorMonitor()
     {
-        var cursor = System.Windows.Forms.Cursor.Position;
-        var screen = System.Windows.Forms.Screen.FromPoint(cursor);
+        var screen = GetTargetScreen(out var anchor);
         var area = screen.WorkingArea;
 
         // モニターごとの DPI で WPF 単位 → ピクセルに換算する
-        double scale = GetScaleForPoint(cursor.X, cursor.Y);
+        double scale = GetScaleForPoint(anchor.X, anchor.Y);
         int widthPx = (int)Math.Round(Width * scale);
         int heightPx = (int)Math.Round(Height * scale);
         int x = area.Left + (area.Width - widthPx) / 2;
@@ -143,6 +150,28 @@ public partial class OverlayWindow : Window
         var hwnd = new WindowInteropHelper(this).EnsureHandle();
         SetWindowPos(hwnd, IntPtr.Zero, x, y, widthPx, heightPx, SWP_NOZORDER | SWP_NOACTIVATE);
     }
+
+    /// <summary>前面ウィンドウのあるモニターを返す。取得できない場合はカーソル位置で代用する。</summary>
+    private static System.Windows.Forms.Screen GetTargetScreen(out System.Drawing.Point anchor)
+    {
+        var hwnd = GetForegroundWindow();
+        if (hwnd != IntPtr.Zero && GetWindowRect(hwnd, out var rect))
+        {
+            anchor = new System.Drawing.Point((rect.left + rect.right) / 2, (rect.top + rect.bottom) / 2);
+            return System.Windows.Forms.Screen.FromPoint(anchor);
+        }
+        anchor = System.Windows.Forms.Cursor.Position;
+        return System.Windows.Forms.Screen.FromPoint(anchor);
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct RECT { public int left, top, right, bottom; }
+
+    [DllImport("user32.dll")]
+    private static extern IntPtr GetForegroundWindow();
+
+    [DllImport("user32.dll")]
+    private static extern bool GetWindowRect(IntPtr hWnd, out RECT lpRect);
 
     private static double GetScaleForPoint(int x, int y)
     {

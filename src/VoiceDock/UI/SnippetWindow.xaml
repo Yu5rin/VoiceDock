@@ -18,16 +18,23 @@
         <TextBlock Grid.Row="1" Style="{StaticResource SubText}" Margin="0,4,0,10"
                    Text="「読み」だけを発話すると、登録した本文に展開して入力します（例:「じゅうしょ」→ 会社の住所全文）。誤爆を防ぐため、発話全体が読みと一致した場合のみ展開されます。"/>
 
-        <DataGrid Grid.Row="2" x:Name="Grid"
+        <Grid Grid.Row="2">
+            <DataGrid x:Name="Grid"
                   AutoGenerateColumns="False" CanUserAddRows="True"
                   CanUserSortColumns="False" CanUserReorderColumns="False"
                   SelectionUnit="CellOrRowHeader"
                   Background="{StaticResource PanelBrush}">
-            <DataGrid.Columns>
-                <DataGridTextColumn Header="読み（発話）" Binding="{Binding Phrase, UpdateSourceTrigger=PropertyChanged}" Width="200"/>
-                <DataGridTextColumn Header="展開後の本文" Binding="{Binding Expansion, UpdateSourceTrigger=PropertyChanged}" Width="*"/>
+                <DataGrid.Columns>
+                    <DataGridTextColumn Header="読み（発話）" Binding="{Binding Phrase, UpdateSourceTrigger=PropertyChanged}" Width="200"/>
+                    <DataGridTextColumn Header="展開後の本文" Binding="{Binding Expansion, UpdateSourceTrigger=PropertyChanged}" Width="*"/>
             </DataGrid.Columns>
-        </DataGrid>
+            </DataGrid>
+            <!-- 0 件のときに真っ白にならないよう、何をすべきかを示す -->
+            <TextBlock x:Name="EmptyText" Style="{StaticResource SubText}"
+                       HorizontalAlignment="Center" VerticalAlignment="Center"
+                       TextAlignment="Center" IsHitTestVisible="False" Visibility="Collapsed"
+                       Text="まだ登録がありません。下の行に「読み」と「展開後の本文」を入力してください。"/>
+        </Grid>
 
         <StackPanel Grid.Row="3" Orientation="Horizontal" Margin="0,12,0,0">
             <Button Content="行を削除" Click="DeleteRows_Click"/>

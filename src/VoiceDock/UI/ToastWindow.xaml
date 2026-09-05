@@ -8,17 +8,17 @@
         Focusable="False" ResizeMode="NoResize" Opacity="0"
         FontFamily="Yu Gothic UI, Yu Gothic, Meiryo UI, sans-serif" FontSize="13">
     <!-- ミニマルデザインに合わせた自作トースト通知（バルーン通知は使わない） -->
-    <Border CornerRadius="8" Background="#F0232328" BorderBrush="#FF3C3C44" BorderThickness="1">
+    <Border CornerRadius="8" Background="{DynamicResource ToastBrush}" BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1">
         <Grid>
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="Auto"/>
                 <ColumnDefinition Width="*"/>
             </Grid.ColumnDefinitions>
-            <Border Grid.Column="0" x:Name="AccentBar" Width="3" Background="#FF9A9AA2"
+            <Border Grid.Column="0" x:Name="AccentBar" Width="3" Background="{DynamicResource SubFgBrush}"
                     CornerRadius="1.5" Margin="10,12,0,12"/>
             <StackPanel Grid.Column="1" Margin="12,12,16,12">
-                <TextBlock x:Name="TitleText" Foreground="#FFE8E8EA" FontWeight="Bold" Text="VoiceDock"/>
-                <TextBlock x:Name="MessageText" Foreground="#FFC9C9CE" TextWrapping="Wrap" Margin="0,4,0,0"/>
+                <TextBlock x:Name="TitleText" Foreground="{DynamicResource FgBrush}" FontWeight="Bold" Text="VoiceDock"/>
+                <TextBlock x:Name="MessageText" Foreground="{DynamicResource SubFgBrush}" TextWrapping="Wrap" Margin="0,4,0,0"/>
             </StackPanel>
         </Grid>
     </Border>

@@ -23,6 +23,8 @@ public partial class SnippetWindow : Window
         _snippets = snippets;
         _rows = new ObservableCollection<SnippetEntry>(snippets.Entries);
         Grid.ItemsSource = _rows;
+        _rows.CollectionChanged += (_, _) => UpdateEmptyState();
+        UpdateEmptyState();
 
         Grid.CellEditEnding += (_, _) => Dispatcher.BeginInvoke(Persist);
     }
@@ -37,4 +39,7 @@ public partial class SnippetWindow : Window
     private void Persist() => _snippets.Replace(_rows);
 
     private void Window_Closing(object sender, CancelEventArgs e) => Persist();
+
+    private void UpdateEmptyState() =>
+        EmptyText.Visibility = _rows.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
 }

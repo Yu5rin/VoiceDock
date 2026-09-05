@@ -42,6 +42,7 @@ public partial class LogWindow : Window
                 LogList.Items.Add(entry.ToString());
                 ScrollToEnd();
             }
+            UpdateEmptyState();
         });
     }
 
@@ -58,7 +59,31 @@ public partial class LogWindow : Window
         LogList.Items.Clear();
         foreach (var e in _entries.Where(Matches))
             LogList.Items.Add(e.ToString());
+        UpdateEmptyState();
         ScrollToEnd();
+    }
+
+    private void UpdateEmptyState()
+    {
+        bool empty = LogList.Items.Count == 0;
+        EmptyText.Visibility = empty ? Visibility.Visible : Visibility.Collapsed;
+        EmptyText.Text = _entries.Count == 0
+            ? "まだログがありません。音声入力を使うとここに記録されます。"
+            : "この種別に該当するログがありません。";
+    }
+
+    private void DeleteLogs_Click(object sender, RoutedEventArgs e)
+    {
+        var answer = MessageBox.Show(this,
+            "保存されているログファイルをすべて削除します。この操作は取り消せません。続けますか？",
+            "ログの削除", MessageBoxButton.OKCancel, MessageBoxImage.Warning, MessageBoxResult.Cancel);
+        if (answer != MessageBoxResult.OK) return;
+
+        int deleted = _log.DeleteAllLogFiles();
+        _log.ClearMemory();
+        _entries.Clear();
+        Rebuild();
+        ToastWindow.Show($"ログを削除しました（{deleted} ファイル）。");
     }
 
     private void FilterCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
@@ -84,7 +109,8 @@ public partial class LogWindow : Window
         }
         catch (Exception ex)
         {
-            ToastWindow.Show($"コピーに失敗しました: {ex.Message}", ToastKind.Error);
+            _log.Error($"ログのコピーに失敗しました: {ex}");
+            ToastWindow.Show($"コピーできませんでした。{UserMessage.Describe(ex)}", ToastKind.Error);
         }
     }
 
@@ -103,7 +129,8 @@ public partial class LogWindow : Window
         }
         catch (Exception ex)
         {
-            ToastWindow.Show($"フォルダを開けませんでした: {ex.Message}", ToastKind.Error);
+            _log.Error($"ログフォルダを開けませんでした: {ex}");
+            ToastWindow.Show($"フォルダを開けませんでした。{UserMessage.Describe(ex)}", ToastKind.Error);
         }
     }
 

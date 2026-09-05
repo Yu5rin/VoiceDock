@@ -118,6 +118,15 @@ public class AppSettings
     /// <summary>録音開始/停止時に操作音を鳴らす</summary>
     public bool SoundFeedback { get; set; } = true;
 
+    /// <summary>
+    /// 認識したテキストをログファイルに保存する。
+    ///
+    /// 音声入力の内容そのもの（メールの下書き、顧客名、読み上げたパスワード等）が
+    /// 平文で 30 日間残るため、既定では保存しない。動作確認や誤認識の調査が必要な
+    /// ときだけ有効にする想定。
+    /// </summary>
+    public bool LogRecognitionText { get; set; }
+
     /// <summary>初回起動ガイドを表示済みかどうか</summary>
     public bool FirstRunDone { get; set; }
 
@@ -130,6 +139,9 @@ public class AppSettings
     /// 済むよう、コードに直書きせず設定ファイルに持たせている。
     /// </summary>
     public string UpdateApiUrl { get; set; } = "https://api.github.com/repos/Yu5rin/VoiceDock/releases/latest";
+
+    /// <summary>この版は案内しない、と利用者が指定したバージョン（例: "0.7.2"）。</summary>
+    public string? SkippedVersion { get; set; }
 
     /// <summary>前回、更新を確認した日時 (UTC)。未確認なら null</summary>
     public DateTime? LastUpdateCheckUtc { get; set; }

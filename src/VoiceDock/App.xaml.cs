@@ -24,6 +24,9 @@ public partial class App : Application
     private RecordingController? _controller;
     private System.Windows.Threading.DispatcherTimer? _watchdog;
 
+    /// <summary>認識ブリッジに接続できていない状態が何回続いたか（一瞬の切断で再起動しないため）。</summary>
+    private int _browserDownChecks;
+
     private SettingsWindow? _settingsWindow;
     private DictionaryWindow? _dictionaryWindow;
     private SnippetWindow? _snippetWindow;
@@ -121,8 +124,6 @@ public partial class App : Application
         _bridge.Ready += () => Dispatcher.BeginInvoke(() =>
         {
             _log!.Info("認識エンジンの準備が完了しました");
-            // ここまで来て初めてブラウザが「使える」と分かるので、再起動の失敗回数を戻す
-            _browser?.NotifyHealthy();
             // 起動直後は認識できないため、準備が整ったことをトレイに反映する
             _tray?.SetState(TrayState.Idle);
         });
@@ -157,14 +158,32 @@ public partial class App : Application
         };
         _watchdog.Tick += (_, _) =>
         {
-            if (_browser is not { IsRunning: false }) return;
+            if (_browser == null || _bridge == null) return;
+
+            // 生きているかどうかは、プロセスの有無ではなく認識ブリッジへの接続で判断する。
+            //
+            // Chromium は同じプロファイルで起動されると既存インスタンスへ処理を渡して
+            // すぐ終了する。プロセスの終了だけを見て再起動していたため、
+            // 実際には動いているブラウザに新しいウィンドウを開き続け、
+            // 認識用ウィンドウが際限なく増えてしまっていた。
+            if (_bridge.IsConnected)
+            {
+                _browserDownChecks = 0;
+                return;
+            }
+
+            // 起動直後や一瞬の切断で慌てて再起動しないよう、続けて落ちている場合だけ動かす
+            if (++_browserDownChecks < 2) return;
+            _browserDownChecks = 0;
 
             // 起動できない環境で無限に再試行しないよう、上限に達したら監視を止める
             if (_browser.GaveUp)
             {
                 _watchdog!.Stop();
                 _tray!.SetState(TrayState.Error);
-                ToastWindow.Show("認識用ブラウザを起動できないため、音声入力を利用できません。設定から使用ブラウザをご確認ください。", ToastKind.Error);
+                ToastWindow.Show("認識用ブラウザを起動できないため、音声入力を利用できません。" +
+                                 "設定から使用ブラウザをご確認いただくか、トレイメニューの「認識エンジンを再起動」をお試しください。",
+                                 ToastKind.Error);
                 return;
             }
             _browser.Relaunch();

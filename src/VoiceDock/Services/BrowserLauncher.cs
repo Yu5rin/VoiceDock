@@ -14,26 +14,46 @@ namespace VoiceDock.Services;
 /// </summary>
 public sealed class BrowserLauncher : IDisposable
 {
-    /// <summary>再起動を諦めるまでの回数。無いと起動できない環境で永久にプロセス生成を試みてしまう。</summary>
-    private const int MaxRelaunchAttempts = 5;
+    /// <summary>この時間内に <see cref="MaxRelaunchesPerWindow"/> 回までしか再起動しない。</summary>
+    private static readonly TimeSpan RelaunchWindow = TimeSpan.FromMinutes(10);
+
+    /// <summary>
+    /// 一定時間内に許す再起動の回数。
+    ///
+    /// 「調子が戻ったら回数を 0 に戻す」方式にすると、
+    /// 「起動 → 少し動く → 落ちる」を繰り返す状態で毎回リセットされ、
+    /// 上限が働かないまま延々とウィンドウを開き続けてしまう。
+    /// そのため回数ではなく「直近◯分に何回起動したか」で判断する。
+    /// </summary>
+    private const int MaxRelaunchesPerWindow = 5;
 
     private readonly LogService _log;
     private readonly SettingsService _settings;
     private Process? _process;
     private Func<string>? _urlFactory;
-    private int _relaunchAttempts;
+
+    /// <summary>直近の再起動時刻。古いものは順に捨てる。</summary>
+    private readonly Queue<DateTime> _relaunchTimes = new();
 
     /// <summary>再起動の上限に達したかどうか（呼び出し側が監視を止めるために見る）。</summary>
-    public bool GaveUp => _relaunchAttempts >= MaxRelaunchAttempts;
+    public bool GaveUp
+    {
+        get
+        {
+            TrimRelaunchHistory();
+            return _relaunchTimes.Count >= MaxRelaunchesPerWindow;
+        }
+    }
 
-    /// <summary>
-    /// ブラウザが実際に使える状態になったことを通知する（認識ブリッジへ接続できた時点）。
-    /// 単に起動できただけでは正常とみなさない。
-    /// </summary>
-    public void NotifyHealthy() => _relaunchAttempts = 0;
+    private void TrimRelaunchHistory()
+    {
+        var limit = DateTime.UtcNow - RelaunchWindow;
+        while (_relaunchTimes.Count > 0 && _relaunchTimes.Peek() < limit)
+            _relaunchTimes.Dequeue();
+    }
 
     /// <summary>設定変更などで、諦めた状態からやり直せるようにする。</summary>
-    public void ResetRelaunchAttempts() => _relaunchAttempts = 0;
+    public void ResetRelaunchAttempts() => _relaunchTimes.Clear();
 
     /// <summary>
     /// 使用ブラウザの設定を変えたときなどに、今のブラウザを終了して起動し直す。
@@ -41,7 +61,7 @@ public sealed class BrowserLauncher : IDisposable
     /// </summary>
     public bool Restart()
     {
-        _relaunchAttempts = 0;
+        _relaunchTimes.Clear();
         if (_urlFactory == null) return false;
         KillCurrent();
         _log.Info("設定の変更にあわせて認識用ブラウザを起動し直します");
@@ -72,9 +92,10 @@ public sealed class BrowserLauncher : IDisposable
     {
         if (_urlFactory == null) return false;
         if (GaveUp) return false;
-        _relaunchAttempts++;
+        _relaunchTimes.Enqueue(DateTime.UtcNow);
         KillCurrent();
-        _log.Warn($"認識用ブラウザが停止していたため再起動します（{_relaunchAttempts}/{MaxRelaunchAttempts} 回目）");
+        _log.Warn($"認識用ブラウザが応答しないため再起動します" +
+                  $"（直近 {RelaunchWindow.TotalMinutes:0} 分で {_relaunchTimes.Count}/{MaxRelaunchesPerWindow} 回目）");
         // 認識ページのトークンは使い捨てのため、再起動時は新しい URL を発行する
         bool ok = Launch(_urlFactory);
         if (!ok && GaveUp)
@@ -95,6 +116,49 @@ public sealed class BrowserLauncher : IDisposable
         _process = null;
     }
 
+    /// <summary>
+    /// 認識用プロファイルで動いている Chromium 本体を終了させる。
+    ///
+    /// Process.Start が返すプロセスは、既存インスタンスへ処理を渡して
+    /// すぐ終了してしまうことがあり、その場合こちらの手元には本体のハンドルが残らない。
+    /// Chromium 自身が二重起動の判定に使っているメッセージ専用ウィンドウ
+    /// （クラス名 Chrome_MessageWindow・ウィンドウ文字列はプロファイルのパス）から
+    /// 本体を突き止めて終了させる。専用プロファイルのみが対象なので、
+    /// 利用者が普段使っているブラウザには影響しない。
+    /// </summary>
+    private void KillProfileInstance()
+    {
+        try
+        {
+            var profile = AppPaths.BrowserProfileDir;
+            for (int i = 0; i < 5; i++)
+            {
+                var hwnd = FindWindowEx(HwndMessage, IntPtr.Zero, "Chrome_MessageWindow", profile);
+                if (hwnd == IntPtr.Zero) return;
+
+                GetWindowThreadProcessId(hwnd, out uint pid);
+                if (pid == 0) return;
+
+                using var proc = Process.GetProcessById((int)pid);
+                proc.Kill(entireProcessTree: true);
+                proc.WaitForExit(3000);
+                _log.Info("認識用プロファイルで動いていたブラウザを終了しました");
+            }
+        }
+        catch
+        {
+            // 見つからない・既に終了している場合は何もしない
+        }
+    }
+
+    private static readonly IntPtr HwndMessage = new(-3);
+
+    [System.Runtime.InteropServices.DllImport("user32.dll", CharSet = System.Runtime.InteropServices.CharSet.Unicode)]
+    private static extern IntPtr FindWindowEx(IntPtr parent, IntPtr childAfter, string? className, string? windowName);
+
+    [System.Runtime.InteropServices.DllImport("user32.dll")]
+    private static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint processId);
+
     /// <summary>設定に応じたブラウザを起動して認識ページを開く。起動できたら true。</summary>
     /// <param name="urlFactory">
     /// 読み込ませる URL を生成する関数。認識ページのトークンは 1 回限り有効なため、
@@ -103,6 +167,14 @@ public sealed class BrowserLauncher : IDisposable
     public bool Launch(Func<string> urlFactory)
     {
         _urlFactory = urlFactory;
+
+        // 同じ --user-data-dir で既にブラウザが動いていると、ここで起動したプロセスは
+        // 「既存のインスタンスに開いてもらう」よう頼んで即座に終了する。
+        // その状態を放置すると、プロセスが終了したことを監視が「落ちた」と誤解して
+        // 再起動を繰り返し、認識用ウィンドウだけが増え続ける。
+        // 起動前に必ず片付けて、常に自分が本体を握るようにする。
+        KillProfileInstance();
+
         var url = urlFactory();
         var (exe, name) = ResolveBrowser();
         if (exe == null)
@@ -151,6 +223,29 @@ public sealed class BrowserLauncher : IDisposable
                 SaveLaunchedPid(_process);
             }
             _log.Info($"認識用ブラウザを起動しました: {name} ({Path.GetFileName(exe)})");
+
+            // 起動したプロセスがすぐ終了した場合、既存インスタンスへ処理を渡した可能性が高い。
+            // この状態はウィンドウが増える不具合の原因になるため、記録に残しておく。
+            // 起動処理を待たせないよう、確認は別スレッドで行う。
+            var started = _process;
+            if (started != null)
+            {
+                _ = Task.Run(() =>
+                {
+                    try
+                    {
+                        if (started.WaitForExit(1500))
+                            _log.Warn("起動した認識用ブラウザのプロセスが即座に終了しました。" +
+                                      "既存のブラウザへ処理が渡された可能性があります" +
+                                      "（動作中かどうかは認識ブリッジへの接続で判断します）");
+                    }
+                    catch
+                    {
+                        // 既に破棄されている場合は何もしない
+                    }
+                });
+            }
+
             return _process != null;
         }
         catch (Exception ex)
@@ -337,16 +432,10 @@ public sealed class BrowserLauncher : IDisposable
 
     public void Dispose()
     {
-        try
-        {
-            if (_process is { HasExited: false })
-                _process.Kill(entireProcessTree: true);
-        }
-        catch
-        {
-            // 終了処理の失敗は無視
-        }
-        _process?.Dispose();
+        KillCurrent();
+        // 手元のハンドルが既に終了していても、プロファイルで動いている本体が残ることがある。
+        // 終了時に片付けないと、画面外のウィンドウがマイクを掴んだまま残り続ける。
+        KillProfileInstance();
         ClearLaunchedPid();
     }
 }

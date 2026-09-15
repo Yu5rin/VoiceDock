@@ -130,11 +130,17 @@
                         <Separator Margin="0,16" Background="{StaticResource BorderBrush}"/>
 
                         <TextBlock Text="認識エンジン" FontWeight="Bold"/>
-                        <TextBlock Text="認識はブラウザの Web Speech API で行います（日本語）。使用マイクは Windows の既定デバイスが使われます"
+                        <TextBlock Text="認識はブラウザの Web Speech API で行います（日本語）"
                                    Style="{StaticResource SubText}" Margin="0,2,0,6"/>
                         <ComboBox x:Name="BrowserCombo" SelectionChanged="BrowserCombo_SelectionChanged"/>
-                        <TextBlock Text="「既定のブラウザに合わせる」では、Windows の既定が Chrome なら Chrome、それ以外は Edge を使用します。変更後は再起動で反映されます"
+                        <TextBlock Text="「既定のブラウザに合わせる」では、Windows の既定が Chrome なら Chrome、それ以外は Edge を使用します。変更するとその場で切り替わります"
                                    Style="{StaticResource SubText}" Margin="0,4,0,0"/>
+
+                        <TextBlock Text="マイク" FontWeight="Bold" Margin="0,16,0,0"/>
+                        <TextBlock x:Name="MicrophoneText" Style="{StaticResource SubText}" Margin="0,2,0,0"
+                                   TextWrapping="Wrap"/>
+                        <TextBlock Text="音声認識は常に Windows の既定の録音デバイスを使います（Web Speech API にマイクを指定する手段が無いため、ここでは選べません）。変更するときは Windows の 設定 → システム → サウンド → 入力 で切り替えてください。録音中に切り替えた場合も追随します"
+                                   Style="{StaticResource SubText}" Margin="0,4,0,0" TextWrapping="Wrap"/>
 
                     </StackPanel>
                 </ScrollViewer>

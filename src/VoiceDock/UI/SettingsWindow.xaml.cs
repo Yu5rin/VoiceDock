@@ -25,7 +25,7 @@ public partial class SettingsWindow : Window
     public SettingsWindow(SettingsService settings,
         Func<HotkeySpec, bool> applyHotkey, Func<HotkeySpec, bool> applyUndoHotkey,
         Action openDictionary, Action openSnippets, Action openAppRules, Action checkUpdate,
-        Action restartBrowser)
+        Action restartBrowser, Func<string?> getMicrophone)
     {
         InitializeComponent();
         AppTheme.ApplyToWindow(this);
@@ -37,6 +37,13 @@ public partial class SettingsWindow : Window
         _openAppRules = openAppRules;
         _checkUpdate = checkUpdate;
         _restartBrowser = restartBrowser;
+
+        // マイクは選べない（Web Speech API に指定手段が無い）ため、
+        // 今どれが使われているかだけを見えるようにする
+        var mic = getMicrophone();
+        MicrophoneText.Text = mic is { Length: > 0 }
+            ? $"使用中のマイク: {mic}"
+            : "使用中のマイク: 音声入力を一度行うと表示されます";
 
         HotkeyBox.Text = settings.Current.Hotkey;
         UndoHotkeyBox.Text = settings.Current.UndoHotkey;

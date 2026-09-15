@@ -47,6 +47,16 @@ public sealed class SpeechBridgeServer : IDisposable
     /// <summary>ブラウザ(WebSocket)が接続済みかどうか。</summary>
     public bool IsConnected => _socket?.State == WebSocketState.Open;
 
+    /// <summary>
+    /// 実際に使われているマイクの名前（まだ録音していない場合は null）。
+    /// Web Speech API にはマイクを指定する手段が無く、常に Windows の既定デバイスが使われる。
+    /// どのマイクが使われているかは、録音を開始したときに初めて分かる。
+    /// </summary>
+    public string? CurrentMicrophone { get; private set; }
+
+    /// <summary>使用中のマイクが変わったときに発火（引数は 変更前, 変更後）。</summary>
+    public event Action<string?, string>? MicrophoneChanged;
+
     /// <summary>確定した認識テキスト。</summary>
     public event Action<string>? FinalText;
 
@@ -234,6 +244,18 @@ public sealed class SpeechBridgeServer : IDisposable
                     if (root.TryGetProperty("value", out var mv))
                         RecognitionModeReported?.Invoke(mv.GetString() ?? "");
                     break;
+                case "mic":
+                    if (root.TryGetProperty("label", out var ml))
+                    {
+                        var label = ml.GetString() ?? "";
+                        if (label.Length > 0 && label != CurrentMicrophone)
+                        {
+                            var previous = CurrentMicrophone;
+                            CurrentMicrophone = label;
+                            MicrophoneChanged?.Invoke(previous, label);
+                        }
+                    }
+                    break;
                 case "error":
                     var detail = root.TryGetProperty("detail", out var de) ? de.GetString() : "";
                     RecognitionError?.Invoke(detail ?? "");
@@ -410,6 +432,7 @@ public sealed class SpeechBridgeServer : IDisposable
     if(micStream) return;
     try{
       micStream = await navigator.mediaDevices.getUserMedia({audio:true});
+      reportMic();
       audioCtx = new (window.AudioContext || window.webkitAudioContext)();
       const src = audioCtx.createMediaStreamSource(micStream);
       analyser = audioCtx.createAnalyser();
@@ -424,6 +447,34 @@ public sealed class SpeechBridgeServer : IDisposable
       }, 60);
     }catch(_){ /* レベル取得失敗は致命的ではない */ }
   }
+
+  // どのマイクが使われているかを本体へ知らせる。
+  // Web Speech API はデバイスを指定できないため、実際に掴んだストリームから名前を読む。
+  function reportMic(){
+    try{
+      const t = micStream && micStream.getAudioTracks()[0];
+      if(t && t.label) send({type:'mic', label:t.label});
+    }catch(_){}
+  }
+
+  // 既定マイクが差し替わったら掴み直す。
+  // 録音していないときは、次に開始した時点で新しい既定マイクが使われる。
+  async function onDeviceChange(){
+    if(!shouldListen) return;
+    stopLevel();
+    await startLevel();
+    // 認識のストリームも開き直す（onend で自動的に再開される）
+    try{ recog && recog.stop(); }catch(_){}
+  }
+
+  try{
+    let micChangeTimer = null;
+    navigator.mediaDevices.addEventListener('devicechange', () => {
+      // 抜き差しでは何度もまとめて発火するため、落ち着くまで待つ
+      if(micChangeTimer) clearTimeout(micChangeTimer);
+      micChangeTimer = setTimeout(onDeviceChange, 800);
+    });
+  }catch(_){ /* 対応していない環境では何もしない */ }
 
   function stopLevel(){
     if(levelTimer){ clearInterval(levelTimer); levelTimer = null; }

@@ -127,6 +127,14 @@ public partial class App : Application
             // 起動直後は認識できないため、準備が整ったことをトレイに反映する
             _tray?.SetState(TrayState.Idle);
         });
+        // 使用中のマイクを記録し、途中で切り替わったら知らせる
+        _bridge.MicrophoneChanged += (previous, current) => Dispatcher.BeginInvoke(() =>
+        {
+            _log!.Info($"使用中のマイク: {current}");
+            if (previous != null)
+                ToastWindow.Show($"マイクが「{current}」に切り替わりました。");
+        });
+
         try
         {
             _bridge.Start();
@@ -406,7 +414,7 @@ public partial class App : Application
         }
         _settingsWindow = new SettingsWindow(_settings, ApplyHotkey, ApplyUndoHotkey,
             ShowDictionary, ShowSnippets, ShowAppRules, () => _ = CheckForUpdateAsync(manual: true),
-            RestartBrowser);
+            RestartBrowser, () => _bridge?.CurrentMicrophone);
         _settingsWindow.Show();
         _settingsWindow.Activate();
     }

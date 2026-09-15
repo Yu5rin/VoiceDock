@@ -115,16 +115,26 @@ public sealed class DictionaryService
         }
     }
 
-    /// <summary>認識後テキストに「誤認識語→正しい語」の強制置換を適用する。</summary>
+    /// <summary>
+    /// 認識後テキストに辞書の強制置換を適用する。
+    ///
+    /// 照合はひらがな・カタカナ・半角カナ・英字の大文字小文字を区別しない。
+    /// 認識エンジンは知らない語をかなのまま出すことが多いため、
+    /// 読みで登録しておけば（例:「やまだ」→「山田」）、出力が
+    /// 「やまだ」でも「ヤマダ」でも当たるようになる。
+    /// </summary>
     public string ApplyReplacements(string text)
     {
-        lock (_sync)
+        List<DictionaryEntry> entries;
+        lock (_sync) entries = _entries.ToList();
+
+        // 長い語から先に当てる。短い語を先に置き換えると、
+        // それを含む長い語が壊れて当たらなくなるため。
+        foreach (var e in entries
+                     .Where(e => !string.IsNullOrEmpty(e.Wrong) && !string.IsNullOrEmpty(e.Correct))
+                     .OrderByDescending(e => e.Wrong.Length))
         {
-            foreach (var e in _entries)
-            {
-                if (string.IsNullOrEmpty(e.Wrong) || string.IsNullOrEmpty(e.Correct)) continue;
-                text = text.Replace(e.Wrong, e.Correct);
-            }
+            text = KanaNormalizer.ReplaceLoosely(text, e.Wrong, e.Correct);
         }
         return text;
     }
@@ -133,7 +143,7 @@ public sealed class DictionaryService
     public void ExportCsv(string path)
     {
         var sb = new StringBuilder();
-        sb.AppendLine("誤認識語,正しい語");
+        sb.AppendLine("読み・誤認識語,出したい表記");
         lock (_sync)
         {
             foreach (var e in _entries)
@@ -154,7 +164,9 @@ public sealed class DictionaryService
             if (row.Count == 0) continue;
             var wrong = row.ElementAtOrDefault(0)?.Trim() ?? "";
             var correct = row.ElementAtOrDefault(1)?.Trim() ?? "";
-            if (wrong == "誤認識語" && correct == "正しい語") continue; // ヘッダー行
+            // ヘッダー行は読み飛ばす（以前の版で書き出した見出しも受け付ける）
+            if ((wrong == "読み・誤認識語" && correct == "出したい表記") ||
+                (wrong == "誤認識語" && correct == "正しい語")) continue;
             if (wrong.Length == 0 && correct.Length == 0) continue;
             entries.Add(new DictionaryEntry { Wrong = wrong, Correct = correct });
         }

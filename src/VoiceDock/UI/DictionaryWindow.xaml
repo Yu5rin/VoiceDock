@@ -17,7 +17,7 @@
 
         <TextBlock Grid.Row="0" Text="辞書管理" FontSize="18" FontWeight="Bold"/>
         <TextBlock Grid.Row="1" Style="{StaticResource SubText}" Margin="0,4,0,10"
-                   Text="誤認識語 → 正しい語 の対応を登録します。認識したあとの文字列を置き換える仕組みのため、認識そのものの精度は変わりません。Excel から 2 列のセル範囲をコピーして、この表に Ctrl+V で貼り付けできます。"/>
+                   Text="左に「読み」または実際に出てしまう語、右に出したい表記を登録します（例:「やまだ」→「山田」）。ひらがな・カタカナ・半角カナは区別しないので、読みで登録しておけば「ヤマダ」と認識された場合にも当たります。認識したあとの文字列を置き換える仕組みのため、認識そのものの精度は変わりません。短い読みは別の語の一部にも当たることがあるためご注意ください。Excel から 2 列のセル範囲をコピーして、この表に Ctrl+V で貼り付けできます。"/>
 
         <!-- 大量登録を想定した 2 列テーブル形式 -->
         <Grid Grid.Row="2">
@@ -27,8 +27,8 @@
                   SelectionUnit="CellOrRowHeader"
                   Background="{StaticResource PanelBrush}">
                 <DataGrid.Columns>
-                    <DataGridTextColumn Header="誤認識語" Binding="{Binding Wrong, UpdateSourceTrigger=PropertyChanged}" Width="*"/>
-                    <DataGridTextColumn Header="正しい語" Binding="{Binding Correct, UpdateSourceTrigger=PropertyChanged}" Width="*"/>
+                    <DataGridTextColumn Header="読み・誤認識語" Binding="{Binding Wrong, UpdateSourceTrigger=PropertyChanged}" Width="*"/>
+                    <DataGridTextColumn Header="出したい表記" Binding="{Binding Correct, UpdateSourceTrigger=PropertyChanged}" Width="*"/>
             </DataGrid.Columns>
             </DataGrid>
             <!-- 0 件のときに真っ白にならないよう、何をすべきかを示す -->

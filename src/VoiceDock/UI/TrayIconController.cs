@@ -25,6 +25,7 @@ public sealed class TrayIconController : IDisposable
     public event Action? SnippetRequested;
     public event Action? LogRequested;
     public event Action? RestartEngineRequested;
+    public event Action? DiagnosticsRequested;
     public event Action? UpdateCheckRequested;
     public event Action? ExitRequested;
 
@@ -59,6 +60,8 @@ public sealed class TrayIconController : IDisposable
         menu.Items.Add(CreateItem("定型文", () => SnippetRequested?.Invoke()));
         menu.Items.Add(CreateItem("認識履歴", () => HistoryRequested?.Invoke()));
         menu.Items.Add(CreateItem("ログ表示", () => LogRequested?.Invoke()));
+        // 文字が入らない・認識しないときに、原因の見当を付けられるようにする
+        menu.Items.Add(CreateItem("動作チェック", () => DiagnosticsRequested?.Invoke()));
         // ブラウザが落ちたまま戻らないときに、アプリを再起動せず立て直せるようにする
         menu.Items.Add(CreateItem("認識エンジンを再起動", () => RestartEngineRequested?.Invoke()));
         menu.Items.Add(new ToolStripSeparator());

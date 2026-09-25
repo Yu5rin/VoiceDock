@@ -103,6 +103,13 @@ public class AppSettings
     public Dictionary<string, InputMethod> AppInputMethods { get; set; } = new(StringComparer.OrdinalIgnoreCase);
 
     /// <summary>
+    /// アプリ（プロセス名）ごとの改行の送り方の上書き。
+    /// チャットは Shift+Enter、Excel は Alt+Enter のように、アプリによって改行のキーが違うため。
+    /// ここに無いアプリは <see cref="NewlineMode"/> に従う。キーは拡張子なしのプロセス名。
+    /// </summary>
+    public Dictionary<string, NewlineMode> AppNewlineModes { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>
     /// 音声認識の言語（Web Speech API の言語コード）。既定は日本語。
     /// 選べる値は <see cref="RecognitionLanguages"/> を参照。
     /// </summary>
@@ -189,6 +196,7 @@ public class AppSettings
         var clone = (AppSettings)MemberwiseClone();
         // 参照型は複製しないと、コピー元と同じ辞書を共有してしまう
         clone.AppInputMethods = new Dictionary<string, InputMethod>(AppInputMethods, StringComparer.OrdinalIgnoreCase);
+        clone.AppNewlineModes = new Dictionary<string, NewlineMode>(AppNewlineModes, StringComparer.OrdinalIgnoreCase);
         return clone;
     }
 }

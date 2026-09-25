@@ -410,7 +410,7 @@ public sealed class RecordingController : IDisposable
         // 改行やタブなどの操作系はクリップボード貼り付けに向かないため直接入力する
         bool ok = method == InputMethod.Clipboard && !isCommand
             ? TextInjector.SendViaClipboard(text)
-            : TextInjector.SendText(text, _settings.Current.NewlineMode);
+            : TextInjector.SendText(text, ResolveNewlineMode(app));
 
         if (!ok)
         {
@@ -440,8 +440,30 @@ public sealed class RecordingController : IDisposable
         return count;
     }
 
+    /// <summary>
+    /// 動作チェック画面のテスト入力。音声入力と同じ経路（アプリ別の入力方式・改行、IME の扱い）で
+    /// 前面の入力欄へ文字を入れる。入力先のアプリ名を返す（入らなかった場合は空）。
+    /// 取り消しの対象にはしない（テストの文字を「とりけし」で消せても紛らわしいため）。
+    /// </summary>
+    public string InjectTest(string text)
+    {
+        var app = Inject(text, isCommand: false);
+        _lastInjectedLength = 0;
+        _lastInjectedApp = "";
+        return app;
+    }
+
+    /// <summary>アプリ別の改行の送り方の上書きがあればそれを、無ければ既定の送り方を返す。</summary>
+    public NewlineMode ResolveNewlineMode(string appName)
+    {
+        var s = _settings.Current;
+        if (appName.Length > 0 && s.AppNewlineModes.TryGetValue(appName, out var perApp))
+            return perApp;
+        return s.NewlineMode;
+    }
+
     /// <summary>アプリ別の入力方式の上書きがあればそれを、無ければ既定の入力方式を返す。</summary>
-    private InputMethod ResolveInputMethod(string appName)
+    public InputMethod ResolveInputMethod(string appName)
     {
         var s = _settings.Current;
         if (appName.Length > 0 && s.AppInputMethods.TryGetValue(appName, out var perApp))

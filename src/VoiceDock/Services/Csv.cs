@@ -11,34 +11,40 @@ namespace VoiceDock.Services;
 internal static class Csv
 {
     /// <summary>1 行目を見出しとして、行の一覧を CSV ファイルに書き出す。</summary>
-    public static void Write(string path, string header1, string header2,
-        IEnumerable<(string A, string B)> rows)
+    public static void Write(string path, IReadOnlyList<string> headers, IEnumerable<IReadOnlyList<string>> rows)
     {
         var sb = new StringBuilder();
-        sb.Append(Escape(header1)).Append(',').Append(Escape(header2)).Append("\r\n");
-        foreach (var (a, b) in rows)
-            sb.Append(Escape(a)).Append(',').Append(Escape(b)).Append("\r\n");
+        AppendRow(sb, headers);
+        foreach (var row in rows) AppendRow(sb, row);
         File.WriteAllText(path, sb.ToString(), new UTF8Encoding(encoderShouldEmitUTF8Identifier: true));
     }
 
     /// <summary>
-    /// CSV ファイルを読み、2 列ずつの組にして返す。
-    /// <paramref name="isHeader"/> が true を返す行（見出し）は読み飛ばす。
+    /// CSV ファイルを読み、各行を <paramref name="columns"/> 列にそろえて返す（足りない列は空文字）。
+    /// <paramref name="isHeader"/> が true を返す行（見出し）と、すべて空の行は読み飛ばす。
     /// </summary>
-    public static List<(string A, string B)> Read(string path, Func<string, string, bool> isHeader)
+    public static List<string[]> Read(string path, int columns, Func<string[], bool> isHeader)
     {
         var text = File.ReadAllText(path, Encoding.UTF8);
-        var result = new List<(string, string)>();
+        var result = new List<string[]>();
         foreach (var row in Parse(text))
         {
-            if (row.Count == 0) continue;
-            var a = row.ElementAtOrDefault(0) ?? "";
-            var b = row.ElementAtOrDefault(1) ?? "";
-            if (isHeader(a.Trim(), b.Trim())) continue;
-            if (a.Trim().Length == 0 && b.Trim().Length == 0) continue;
-            result.Add((a, b));
+            var cells = Enumerable.Range(0, columns).Select(i => row.ElementAtOrDefault(i) ?? "").ToArray();
+            if (cells.All(c => c.Trim().Length == 0)) continue;
+            if (isHeader(cells.Select(c => c.Trim()).ToArray())) continue;
+            result.Add(cells);
         }
         return result;
+    }
+
+    private static void AppendRow(StringBuilder sb, IReadOnlyList<string> cells)
+    {
+        for (int i = 0; i < cells.Count; i++)
+        {
+            if (i > 0) sb.Append(',');
+            sb.Append(Escape(cells[i]));
+        }
+        sb.Append("\r\n");
     }
 
     private static string Escape(string s)

@@ -260,7 +260,7 @@ public sealed class TextProcessor
             text = ConvertWidth(text, s.CharacterWidth);
 
         // 辞書の「誤認識語→正しい語」強制置換
-        text = _dictionary.ApplyReplacements(text);
+        text = _dictionary.ApplyReplacements(text, countUsage: true);
 
         // 日本語の間に入る不要な半角スペースを除去（Web Speech API が挿入することがある）
         if (s.RemoveSpaces && !english)

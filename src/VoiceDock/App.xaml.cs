@@ -33,6 +33,7 @@ public partial class App : Application
     private AppRulesWindow? _appRulesWindow;
     private LogWindow? _logWindow;
     private HistoryWindow? _historyWindow;
+    private DiagnosticsWindow? _diagnosticsWindow;
     private BackupService? _backup;
     private UpdateWindow? _updateWindow;
 
@@ -109,6 +110,7 @@ public partial class App : Application
         _tray.SnippetRequested += ShowSnippets;
         _tray.LogRequested += ShowLog;
         _tray.RestartEngineRequested += RestartBrowser;
+        _tray.DiagnosticsRequested += ShowDiagnostics;
         _tray.UpdateCheckRequested += () =>
         {
             // 起動時に見つけた更新があれば、通信し直さずそのまま案内画面を出す
@@ -571,6 +573,19 @@ public partial class App : Application
         _historyWindow.Activate();
     }
 
+    private void ShowDiagnostics()
+    {
+        if (_settings == null || _controller == null) return;
+        if (_diagnosticsWindow is { IsLoaded: true })
+        {
+            _diagnosticsWindow.Activate();
+            return;
+        }
+        _diagnosticsWindow = new DiagnosticsWindow(_settings, _bridge, _browser, _hotkey, _controller, ShowLog);
+        _diagnosticsWindow.Show();
+        _diagnosticsWindow.Activate();
+    }
+
     private void ShowLog()
     {
         if (_log == null) return;
@@ -594,6 +609,8 @@ public partial class App : Application
     {
         _watchdog?.Stop();
         _controller?.Dispose();
+        // 辞書の使用回数はまとめて保存しているため、終了前に書き出す
+        _dictionary?.Flush();
         _hotkey?.Dispose();
         _tray?.Dispose();
         _browser?.Dispose();

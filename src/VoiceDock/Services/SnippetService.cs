@@ -144,20 +144,21 @@ public sealed class SnippetService
     {
         List<SnippetEntry> entries;
         lock (_sync) entries = _entries.ToList();
-        Csv.Write(path, CsvHeaderPhrase, CsvHeaderExpansion, entries.Select(e => (e.Phrase, e.Expansion)));
+        Csv.Write(path, new[] { CsvHeaderPhrase, CsvHeaderExpansion },
+            entries.Select(e => (IReadOnlyList<string>)new[] { e.Phrase, e.Expansion }));
         _log.Info($"定型文を CSV にエクスポートしました: {path}");
     }
 
     /// <summary>CSV からインポートして定型文全体を置き換える。戻り値は取り込んだ件数。</summary>
     public int ImportCsv(string path)
     {
-        var rows = Csv.Read(path, (a, b) => a == CsvHeaderPhrase && b == CsvHeaderExpansion);
+        var rows = Csv.Read(path, 2, h => h[0] == CsvHeaderPhrase && h[1] == CsvHeaderExpansion);
         var entries = rows
             .Select(r => new SnippetEntry
             {
-                Phrase = r.A.Trim(),
+                Phrase = r[0].Trim(),
                 // Excel は改行を CRLF で書くことがあるため、LF にそろえる
-                Expansion = r.B.Replace("\r\n", "\n").Replace('\r', '\n'),
+                Expansion = r[1].Replace("\r\n", "\n").Replace('\r', '\n'),
             })
             .ToList();
         Replace(entries);

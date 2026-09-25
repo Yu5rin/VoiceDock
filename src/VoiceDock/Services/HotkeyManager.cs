@@ -39,6 +39,12 @@ public sealed class HotkeyManager : IDisposable
     /// <summary>押している間だけ録音する方式かどうか。</summary>
     public bool PushToTalk { get; set; }
 
+    /// <summary>音声入力のホットキーが登録できているか（動作チェック画面で表示する）。</summary>
+    public bool IsRecordRegistered => _recordRegistered;
+
+    /// <summary>取り消しのホットキーが登録できているか（動作チェック画面で表示する）。</summary>
+    public bool IsUndoRegistered => _undoRegistered;
+
     /// <summary>
     /// 録音ホットキーを登録する。既存の登録は解除される。
     /// 他アプリと衝突している場合は false を返す（登録は行われない）。

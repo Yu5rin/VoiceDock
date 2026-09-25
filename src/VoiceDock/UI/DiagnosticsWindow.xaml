@@ -1,0 +1,73 @@
+<Window x:Class="VoiceDock.UI.DiagnosticsWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="VoiceDock 動作チェック"
+        Width="580" Height="720" MinWidth="460" MinHeight="420"
+        Style="{StaticResource WindowStyle}"
+        WindowStartupLocation="CenterScreen"
+        Closed="Window_Closed">
+    <Grid Margin="20,16">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+
+        <StackPanel Grid.Row="0">
+            <TextBlock Text="動作チェック" FontSize="18" FontWeight="Bold"/>
+            <TextBlock Style="{StaticResource SubText}" Margin="0,4,0,12"
+                       Text="「文字が入らない」「認識しない」ときに、どこに原因があるかを確かめる画面です。⚠ の付いた項目が原因の候補です。"/>
+        </StackPanel>
+
+        <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" Padding="0,0,6,0">
+            <StackPanel>
+                <!-- VoiceDock の状態 -->
+                <Border Style="{StaticResource FormPanel}">
+                    <StackPanel>
+                        <DockPanel>
+                            <Button DockPanel.Dock="Right" Content="最新の状態に更新" Click="Refresh_Click"/>
+                            <TextBlock Text="VoiceDock の状態" FontWeight="Bold" VerticalAlignment="Center"/>
+                        </DockPanel>
+                        <StackPanel x:Name="StatusPanel" Margin="0,8,0,0"/>
+                    </StackPanel>
+                </Border>
+
+                <!-- 入力先のアプリ -->
+                <Border Style="{StaticResource FormPanel}" Margin="0,12,0,0">
+                    <StackPanel>
+                        <TextBlock Text="入力先のアプリ" FontWeight="Bold"/>
+                        <TextBlock Style="{StaticResource SubText}" Margin="0,2,0,8"
+                                   Text="ボタンを押したら 5 秒以内に、調べたいアプリの入力欄をクリックしてください。そのアプリで使われる入力方式・改行の送り方・IME の状態を調べます。"/>
+                        <StackPanel Orientation="Horizontal">
+                            <Button x:Name="ProbeButton" Content="5 秒後に調べる" Click="Probe_Click"/>
+                            <TextBlock x:Name="ProbeCountdown" Margin="12,0,0,0" VerticalAlignment="Center"
+                                       Foreground="{StaticResource WarnBrush}"/>
+                        </StackPanel>
+                        <StackPanel x:Name="ProbePanel" Margin="0,8,0,0"/>
+                    </StackPanel>
+                </Border>
+
+                <!-- テスト入力 -->
+                <Border Style="{StaticResource FormPanel}" Margin="0,12,0,0">
+                    <StackPanel>
+                        <TextBlock Text="テスト入力" FontWeight="Bold"/>
+                        <TextBlock Style="{StaticResource SubText}" Margin="0,2,0,8"
+                                   Text="ボタンを押したら 5 秒以内に、試したいアプリの入力欄をクリックしてください。音声入力と同じ方法で「VoiceDock のテスト入力です。123 ABC」と入力します。文字が入らない・崩れる場合は、そのアプリの入力方式を「アプリ別の設定」で変えてみてください。"/>
+                        <StackPanel Orientation="Horizontal">
+                            <Button x:Name="TestButton" Content="5 秒後にテスト入力" Click="Test_Click"/>
+                            <TextBlock x:Name="TestCountdown" Margin="12,0,0,0" VerticalAlignment="Center"
+                                       Foreground="{StaticResource WarnBrush}"/>
+                        </StackPanel>
+                        <TextBlock x:Name="TestResult" Margin="0,8,0,0" TextWrapping="Wrap"/>
+                    </StackPanel>
+                </Border>
+            </StackPanel>
+        </ScrollViewer>
+
+        <WrapPanel Grid.Row="2" Margin="0,12,0,0">
+            <Button Content="結果をコピー" Margin="0,0,8,4" Click="Copy_Click"
+                    ToolTip="問い合わせや調査のときに貼り付けられるよう、この画面の内容を文字でコピーします（音声入力の内容は含みません）"/>
+            <Button Content="ログを表示" Margin="0,0,8,4" Click="ShowLog_Click"/>
+        </WrapPanel>
+    </Grid>
+</Window>

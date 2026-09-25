@@ -183,6 +183,7 @@ public sealed class TextProcessor
     private static readonly HashSet<string> UndoWords = new()
     {
         "取り消し", "とりけし", "取消", "取り消して", "元に戻す", "もとにもどす",
+        "戻す", "もどす", "戻して", "もどして",
     };
 
     /// <summary>

@@ -342,18 +342,26 @@ public static class TextInjector
                 inputs.Add(MakeUnicodeInput(c, keyUp: true));
             }
 
-            // 送信中だけ対象アプリの IME を一時的にオフにする。
+            // 入力先の IME をオフにする（戻すのは音声入力が終わってから）。
             //
             // 日本語 IME がオンのまま SendInput の Unicode イベントを送ると、文字が
-            // IME の変換バッファ（未確定文字列）に吸い込まれ、後からまとめて逆順で
-            // 確定される。結果として「変換された語だけが文末に逆順で並ぶ」現象になる。
+            // IME の変換バッファ（未確定文字列）に吸い込まれ、順序が入れ替わったり
+            // 欠けたりする。
+            //
+            // 以前は 1 回送るごとに IME をオフ → 送信 → 文字数ミリ秒待って戻す、としていた。
+            // しかし Chrome や Electron 製のアプリは送ったキーを読み終えるのに時間がかかり、
+            // 読み終える前に IME が戻ると、残りの文字が IME を通ってしまっていた。
+            // 相手がいつ読み終えたかを知る確実な手段は無い（SendMessage は入力キューを
+            // 追い越すため待ち合わせに使えない）ため、音声入力中はずっとオフのままにし、
+            // 止めてから十分な間を置いて <see cref="RestoreSuppressedIme"/> で戻す。
             //
             // IME 状態の変更は ImmAssociateContext ではなく、対象スレッドの既定 IME
             // ウィンドウへ WM_IME_CONTROL を送る方式を使う。ImmAssociateContext は
             // 他プロセスのウィンドウには効かないため。
+            SuppressIme(focused);
+
             // ホットキーを握ったままでもそのまま文字が入るようにする
             var heldModifiers = ReleaseHeldModifiers();
-            bool imeWasOpen = TrySetImeOpen(focused, open: false);
             try
             {
                 // 一括送信でイベント間への割り込みを防ぐ（大きすぎる場合は分割）
@@ -367,20 +375,99 @@ public static class TextInjector
                     if (SendInput((uint)count, chunk, Marshal.SizeOf<INPUT>()) != count)
                         return false;
                 }
-
-                // 送信したキーイベントを対象アプリが読み取り終える前に IME を戻すと、
-                // 残りの文字が再び IME を経由してしまう。文字数に応じた待ち時間を置く
-                // （SendMessage による同期は入力キューを追い越すためバリアにならない）。
-                if (imeWasOpen)
-                    Thread.Sleep(Math.Clamp(text.Length, 25, 150));
                 return true;
             }
             finally
             {
-                // IME を元の状態に戻す
-                if (imeWasOpen) TrySetImeOpen(focused, open: true);
                 RestoreHeldModifiers(heldModifiers);
             }
+        }
+    }
+
+    /// <summary>
+    /// キー操作（Enter、Ctrl+A など）を前面の入力欄へ送る。
+    /// 入力欄が無い場合は何もせず false。
+    /// </summary>
+    public static bool SendKeyStroke(KeyStroke key)
+    {
+        lock (SendLock)
+        {
+            var focused = GetFocusedControl();
+            if (focused == IntPtr.Zero) return false;
+
+            // IME がオンのままだと、Enter が「変換の確定」に使われて送信されない等が起きるため、
+            // 文字の入力と同じく IME をオフにしてから送る
+            SuppressIme(focused);
+            var heldModifiers = ReleaseHeldModifiers();
+            try
+            {
+                var modifiers = new List<ushort>();
+                if (key.Ctrl) modifiers.Add(VK_CONTROL);
+                if (key.Shift) modifiers.Add(VK_SHIFT);
+                if (key.Alt) modifiers.Add(VK_MENU);
+
+                var inputs = new List<INPUT>();
+                foreach (var m in modifiers) inputs.Add(MakeKeyInput(m, keyUp: false));
+                inputs.Add(MakeKeyInput(key.VirtualKey, keyUp: false));
+                inputs.Add(MakeKeyInput(key.VirtualKey, keyUp: true));
+                for (int i = modifiers.Count - 1; i >= 0; i--) inputs.Add(MakeKeyInput(modifiers[i], keyUp: true));
+
+                var array = inputs.ToArray();
+                return SendInput((uint)array.Length, array, Marshal.SizeOf<INPUT>()) == array.Length;
+            }
+            finally
+            {
+                RestoreHeldModifiers(heldModifiers);
+            }
+        }
+    }
+
+    /// <summary>音声入力のあいだ IME をオフにしている入力先（既定 IME ウィンドウ）。</summary>
+    private static readonly HashSet<IntPtr> SuppressedImeWindows = new();
+
+    /// <summary>入力先の IME がオンなら、オフにして覚えておく。SendLock の中で呼ぶこと。</summary>
+    private static void SuppressIme(IntPtr focused)
+    {
+        try
+        {
+            // 対象スレッドの既定 IME ウィンドウ。ウィンドウメッセージ経由なので
+            // 他プロセスのウィンドウに対しても機能する。
+            IntPtr imeWnd = ImmGetDefaultIMEWnd(focused);
+            if (imeWnd == IntPtr.Zero) return;
+
+            bool open = SendMessage(imeWnd, WM_IME_CONTROL, (IntPtr)IMC_GETOPENSTATUS, IntPtr.Zero) != IntPtr.Zero;
+            if (!open) return;   // 元々オフ（または既にオフにしてある）なら何もしない
+
+            SendMessage(imeWnd, WM_IME_CONTROL, (IntPtr)IMC_SETOPENSTATUS, IntPtr.Zero);
+            SuppressedImeWindows.Add(imeWnd);
+        }
+        catch
+        {
+            // IME が利用できない環境では何もしない（通常の入力にフォールバック）
+        }
+    }
+
+    /// <summary>
+    /// 音声入力のためにオフにした IME を、すべて元のオンに戻す。
+    /// 送った文字を相手が読み終えてから呼ぶこと（呼び出し側で十分な間を置く）。
+    /// </summary>
+    public static void RestoreSuppressedIme()
+    {
+        lock (SendLock)
+        {
+            foreach (var imeWnd in SuppressedImeWindows)
+            {
+                try
+                {
+                    if (IsWindow(imeWnd))
+                        SendMessage(imeWnd, WM_IME_CONTROL, (IntPtr)IMC_SETOPENSTATUS, (IntPtr)1);
+                }
+                catch
+                {
+                    // 相手のウィンドウが閉じられている等。戻せなくても害は無い
+                }
+            }
+            SuppressedImeWindows.Clear();
         }
     }
 
@@ -488,38 +575,6 @@ public static class TextInjector
     private const uint WM_IME_CONTROL = 0x0283;
     private const int IMC_GETOPENSTATUS = 0x0005;
     private const int IMC_SETOPENSTATUS = 0x0006;
-
-    /// <summary>
-    /// 対象ウィンドウ（別プロセスでも可）の IME のオン/オフを切り替える。
-    /// 戻り値は「変更前にオンだったかどうか」。オフに切り替える必要が無かった場合や
-    /// IME が無い環境では false を返す。
-    /// </summary>
-    private static bool TrySetImeOpen(IntPtr hwnd, bool open)
-    {
-        try
-        {
-            // 対象スレッドの既定 IME ウィンドウ。ウィンドウメッセージ経由なので
-            // 他プロセスのウィンドウに対しても機能する。
-            IntPtr imeWnd = ImmGetDefaultIMEWnd(hwnd);
-            if (imeWnd == IntPtr.Zero) return false;
-
-            if (!open)
-            {
-                bool wasOpen = SendMessage(imeWnd, WM_IME_CONTROL, (IntPtr)IMC_GETOPENSTATUS, IntPtr.Zero) != IntPtr.Zero;
-                if (!wasOpen) return false;   // 元々オフなら何もしない
-                SendMessage(imeWnd, WM_IME_CONTROL, (IntPtr)IMC_SETOPENSTATUS, IntPtr.Zero);
-                return true;
-            }
-
-            SendMessage(imeWnd, WM_IME_CONTROL, (IntPtr)IMC_SETOPENSTATUS, (IntPtr)1);
-            return true;
-        }
-        catch
-        {
-            // IME が利用できない環境では何もしない（通常の入力にフォールバック）
-            return false;
-        }
-    }
 
     /// <summary>指定ウィンドウを持つスレッドの既定 IME ウィンドウを取得する。</summary>
     [DllImport("imm32.dll")]

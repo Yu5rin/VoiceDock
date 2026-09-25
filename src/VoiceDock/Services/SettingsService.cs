@@ -165,6 +165,10 @@ public sealed class SettingsService
             s.UpdateApiUrl = new AppSettings().UpdateApiUrl;
         }
 
+        // 選べない秒数が書かれていた場合は既定の 30 秒に戻す
+        if (!AppSettings.SilenceAutoStopChoices.Contains(s.SilenceAutoStopSeconds))
+            s.SilenceAutoStopSeconds = 30;
+
         // 対応していない言語コードが書かれていた場合は日本語に戻す
         if (!RecognitionLanguages.IsSupported(s.RecognitionLanguage))
             s.RecognitionLanguage = RecognitionLanguages.Japanese;

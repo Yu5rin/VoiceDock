@@ -45,6 +45,17 @@ public enum NewlineMode
     AltEnter,
 }
 
+/// <summary>認識結果の英数字の幅のそろえ方。</summary>
+public enum CharacterWidth
+{
+    /// <summary>認識結果のまま（既定）</summary>
+    AsIs,
+    /// <summary>半角にそろえる（例: ３時 → 3時）</summary>
+    Half,
+    /// <summary>全角にそろえる（例: 3時 → ３時）</summary>
+    Full,
+}
+
 /// <summary>ホットキーの操作方式。</summary>
 public enum HotkeyMode
 {
@@ -112,11 +123,32 @@ public class AppSettings
     /// </summary>
     public bool VoiceCommandsEnabled { get; set; } = true;
 
+    /// <summary>
+    /// キー操作の音声コマンド（「送信」→ Enter、「全選択」→ Ctrl+A など）を有効にする。
+    /// 発話全体がコマンド語と一致したときだけ働く。
+    /// </summary>
+    public bool KeyCommandsEnabled { get; set; } = true;
+
     /// <summary>定型文スニペット（「じゅうしょ」→ 住所全文 等）を有効にする</summary>
     public bool SnippetsEnabled { get; set; } = true;
 
     /// <summary>認識結果から日本語間の不要な半角スペースを除去する</summary>
     public bool RemoveSpaces { get; set; } = true;
+
+    /// <summary>認識結果の英数字を半角・全角にそろえる（日本語で認識しているときのみ）</summary>
+    public CharacterWidth CharacterWidth { get; set; } = CharacterWidth.AsIs;
+
+    /// <summary>「えーと」「あのー」などのつなぎ言葉を取り除く</summary>
+    public bool RemoveFillers { get; set; }
+
+    /// <summary>
+    /// 無音がこの秒数続いたら音声入力を自動停止する。0 なら自動停止しない。
+    /// 選べる値は <see cref="SilenceAutoStopChoices"/>。
+    /// </summary>
+    public int SilenceAutoStopSeconds { get; set; } = 30;
+
+    /// <summary>無音自動停止の秒数として選べる値（0 は自動停止しない）。</summary>
+    public static readonly int[] SilenceAutoStopChoices = { 15, 30, 60, 0 };
 
     /// <summary>発話の区切りごとに文末へ「。」を自動挿入する</summary>
     public bool AutoPeriod { get; set; } = false;

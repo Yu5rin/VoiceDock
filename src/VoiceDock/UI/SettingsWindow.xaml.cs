@@ -109,6 +109,7 @@ public partial class SettingsWindow : Window
         RemoveFillersCheck.IsChecked = settings.Current.RemoveFillers;
         SnippetsCheck.IsChecked = settings.Current.SnippetsEnabled;
         UndoCheck.IsChecked = settings.Current.UndoEnabled;
+        SuggestUndoCheck.IsChecked = settings.Current.SuggestFrequentUndo;
         SoundCheck.IsChecked = settings.Current.SoundFeedback;
         LocalRecognitionCheck.IsChecked = settings.Current.PreferLocalRecognition;
         LogRecognitionCheck.IsChecked = settings.Current.LogRecognitionText;
@@ -185,6 +186,7 @@ public partial class SettingsWindow : Window
             s.RemoveFillers = RemoveFillersCheck.IsChecked == true;
             s.SnippetsEnabled = SnippetsCheck.IsChecked == true;
             s.UndoEnabled = UndoCheck.IsChecked == true;
+            s.SuggestFrequentUndo = SuggestUndoCheck.IsChecked == true;
             s.SoundFeedback = SoundCheck.IsChecked == true;
             s.PreferLocalRecognition = LocalRecognitionCheck.IsChecked == true;
             s.LogRecognitionText = LogRecognitionCheck.IsChecked == true;

@@ -56,6 +56,9 @@
                                  PreviewKeyDown="UndoHotkeyBox_PreviewKeyDown"/>
                         <TextBlock x:Name="UndoHotkeyWarning" Foreground="{StaticResource WarnBrush}"
                                    TextWrapping="Wrap" Margin="0,4,0,0" Visibility="Collapsed"/>
+                        <CheckBox x:Name="SuggestUndoCheck" Content="同じ文章を何度も取り消したら、辞書への登録を勧める" Margin="0,10,0,0"
+                                  Checked="Option_Changed" Unchecked="Option_Changed"
+                                  ToolTip="同じ文章を 2 回取り消すと通知します。通知をクリックすると、その文章を入れた状態で辞書管理が開きます。取り消した文章は認識履歴の「よく取り消す文章」でも確認できます（メモリにだけ持ち、ファイルには保存しません）"/>
 
                         <Separator Margin="0,16" Background="{StaticResource BorderBrush}"/>
 
@@ -124,7 +127,7 @@
                     <StackPanel>
 
                         <TextBlock Text="音声コマンド" FontWeight="Bold"/>
-                        <TextBlock Text="その語だけを発話すると、対応する文字や操作を入力します。文中に含まれるだけでは反応しません。&#10;・操作: 改行 / スペース / タブ&#10;・句読点: まる（。） てん（、） びっくり（！） はてな（？）&#10;・記号: アットマーク（@） コロン スラッシュ ハイフン アンダーバー ドット かっこ 矢印 など"
+                        <TextBlock Text="その語だけを発話すると、対応する文字や操作を入力します。文中に含まれるだけでは反応しません。&#10;・操作: 改行 / スペース / タブ&#10;・音声入力を止める: 終了 / 音声入力終了 / ストップ&#10;・句読点: まる（。） てん（、） びっくり（！） はてな（？）&#10;・記号: アットマーク（@） コロン スラッシュ ハイフン アンダーバー ドット かっこ 矢印 など"
                                    Style="{StaticResource SubText}" Margin="0,2,0,6"/>
                         <CheckBox x:Name="VoiceCommandsCheck" Content="音声コマンド（句読点・記号を含む）を有効にする"
                                   Checked="Option_Changed" Unchecked="Option_Changed"/>

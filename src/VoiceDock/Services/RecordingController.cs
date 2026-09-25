@@ -74,6 +74,12 @@ public sealed class RecordingController : IDisposable
     /// <summary>直前に入力した先のアプリ（プロセス名）。別アプリでの誤爆を防ぐために使う。</summary>
     private string _lastInjectedApp = "";
 
+    /// <summary>直前に入力した文章（音声コマンドで入れた記号などは空）。取り消した文章の集計に使う。</summary>
+    private string _lastInjectedText = "";
+
+    /// <summary>取り消した文章の集計。メモリにだけ持つ。</summary>
+    private readonly UndoneTracker _undone = new();
+
     /// <summary>認識履歴として保持する最大件数。</summary>
     private const int MaxHistory = 200;
 
@@ -110,6 +116,15 @@ public sealed class RecordingController : IDisposable
 
     /// <summary>認識履歴に 1 件追加されたときに発火。</summary>
     public event Action<RecognitionRecord>? HistoryAdded;
+
+    /// <summary>取り消した文章の集計が変わった（UI スレッドで通知）。</summary>
+    public event Action? UndoneChanged;
+
+    /// <summary>同じ文章を何度も取り消したので、辞書への登録を勧めたい（UI スレッドで通知）。</summary>
+    public event Action<UndoneText>? FrequentUndoDetected;
+
+    /// <summary>取り消した文章の集計（回数の多い順、同じ回数なら新しい順）。</summary>
+    public IReadOnlyList<UndoneText> UndoneTexts => _undone.Snapshot();
 
     /// <summary>認識履歴を消去したときに発火。</summary>
     public event Action? HistoryCleared;
@@ -295,6 +310,13 @@ public sealed class RecordingController : IDisposable
                 return;
             }
 
+            // 「終了」「ストップ」: 声だけで音声入力を止める
+            if (processed.Kind == ProcessedKind.Stop)
+            {
+                lock (_sync) StopListening("音声コマンド");
+                return;
+            }
+
             // キー操作の音声コマンド（送信・全選択など）は、文字ではなくキーを送る
             if (processed.Kind == ProcessedKind.Keys && processed.Keys is { } keys)
             {
@@ -305,6 +327,7 @@ public sealed class RecordingController : IDisposable
                     // 送信した後の入力は新しい文になるので、英語の単語間スペースも補わない
                     _lastInjectedLength = 0;
                     _lastInjectedApp = "";
+                    _lastInjectedText = "";
                     _spaceBeforeNext = false;
                     ScheduleImeRestore();
                 }
@@ -368,11 +391,23 @@ public sealed class RecordingController : IDisposable
         HistoryAdded?.Invoke(record);
     }
 
-    /// <summary>認識履歴を消去する。</summary>
+    /// <summary>認識履歴を消去する。取り消した文章の集計も、話した内容なので一緒に消す。</summary>
     public void ClearHistory()
     {
         lock (_sync) _history.Clear();
+        _undone.Clear();
         HistoryCleared?.Invoke();
+        UndoneChanged?.Invoke();
+    }
+
+    /// <summary>
+    /// 取り消した文章を集計し、同じ文章を何度も取り消していれば辞書への登録を勧める。UI スレッドで呼ぶ。
+    /// </summary>
+    private void RecordUndone(string text)
+    {
+        bool suggest = _undone.Record(text, _settings.Current.SuggestFrequentUndo, out var entry);
+        UndoneChanged?.Invoke();
+        if (suggest) FrequentUndoDetected?.Invoke(entry);
     }
 
     /// <summary>
@@ -417,6 +452,7 @@ public sealed class RecordingController : IDisposable
             _log.Info("テキスト入力欄が見つからないため流し込みをスキップしました");
             _lastInjectedLength = 0;
             _lastInjectedApp = "";
+            _lastInjectedText = "";
             return "";
         }
 
@@ -426,6 +462,8 @@ public sealed class RecordingController : IDisposable
 
         _lastInjectedLength = CountTextElements(text);
         _lastInjectedApp = app;
+        // 英語で補った先頭のスペースは、取り消した文章の集計には含めない
+        _lastInjectedText = isCommand ? "" : text.Trim();
         _lastTargetWindow = window;
         LastTargetApp = app;
         return app;
@@ -450,6 +488,7 @@ public sealed class RecordingController : IDisposable
         var app = Inject(text, isCommand: false);
         _lastInjectedLength = 0;
         _lastInjectedApp = "";
+        _lastInjectedText = "";
         return app;
     }
 
@@ -497,14 +536,20 @@ public sealed class RecordingController : IDisposable
                 return;
             }
 
-            if (TextInjector.SendBackspaces(count))
+            bool undone = TextInjector.SendBackspaces(count);
+            if (undone)
                 _log.Info($"直前の入力 {count} 文字を取り消しました ({reason})");
             else
                 _log.Info("取り消し先の入力欄が見つかりませんでした");
 
+            var undoneText = _lastInjectedText;
+
             // 二重に取り消さないようクリアする
             _lastInjectedLength = 0;
             _lastInjectedApp = "";
+            _lastInjectedText = "";
+
+            if (undone && undoneText.Length > 0) RecordUndone(undoneText);
         }));
     }
 

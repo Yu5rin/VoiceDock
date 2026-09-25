@@ -25,7 +25,7 @@ public partial class ToastWindow : Window
 
     private readonly ToastKind _kind;
 
-    private ToastWindow(string message, ToastKind kind)
+    private ToastWindow(string message, ToastKind kind, Action? onClick = null, string? actionHint = null)
     {
         InitializeComponent();
         _kind = kind;
@@ -44,23 +44,44 @@ public partial class ToastWindow : Window
             DismissHint.Visibility = Visibility.Visible;
         }
 
+        // 操作を伴う通知は、クリックでその操作を行う（案内を添えて、押せることが分かるようにする）
+        if (onClick != null)
+        {
+            DismissHint.Text = actionHint ?? "クリックすると開きます";
+            DismissHint.Visibility = Visibility.Visible;
+        }
+
         // どの通知もクリックで閉じられるようにする
-        MouseLeftButtonDown += (_, _) => FadeOutAndClose();
+        MouseLeftButtonDown += (_, _) =>
+        {
+            FadeOutAndClose();
+            onClick?.Invoke();
+        };
 
         SourceInitialized += (_, _) => ApplyNoActivateStyle();
     }
 
     /// <summary>トーストを表示する。UI スレッド以外から呼んでもよい。</summary>
-    public static void Show(string message, ToastKind kind = ToastKind.Info)
+    public static void Show(string message, ToastKind kind = ToastKind.Info) =>
+        Show(message, kind, onClick: null, actionHint: null);
+
+    /// <summary>
+    /// クリックで操作を行うトーストを表示する。actionHint は押すと何が起きるかの案内。
+    /// 読んでから押せるよう、表示時間は通常より長くする。
+    /// </summary>
+    public static void Show(string message, ToastKind kind, Action? onClick, string? actionHint)
     {
         var dispatcher = Application.Current?.Dispatcher;
         if (dispatcher == null) return;
         dispatcher.BeginInvoke(() =>
         {
-            var toast = new ToastWindow(message, kind);
+            var toast = new ToastWindow(message, kind, onClick, actionHint) { _hasAction = onClick != null };
             toast.ShowToast();
         });
     }
+
+    /// <summary>クリックで操作を行う通知かどうか。</summary>
+    private bool _hasAction;
 
     private void ShowToast()
     {
@@ -91,6 +112,7 @@ public partial class ToastWindow : Window
 
         // 長い文章ほど読む時間が要るため、文字数に応じて表示時間を伸ばす
         var duration = Duration + TimeSpan.FromMilliseconds(Math.Min(4000, MessageText.Text.Length * 60));
+        if (_hasAction) duration += TimeSpan.FromSeconds(4);
         var timer = new DispatcherTimer { Interval = duration };
         timer.Tick += (_, _) =>
         {

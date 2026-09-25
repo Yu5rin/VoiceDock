@@ -82,6 +82,12 @@ public class AppSettings
     /// <summary>直前の入力の取り消し（音声コマンド「とりけし」およびホットキー）を有効にする</summary>
     public bool UndoEnabled { get; set; } = true;
 
+    /// <summary>
+    /// 同じ文章を何度も取り消したら、辞書への登録を勧める。
+    /// 取り消した文章はメモリにだけ持ち、ファイルには保存しない（認識履歴と同じ扱い）。
+    /// </summary>
+    public bool SuggestFrequentUndo { get; set; } = true;
+
     /// <summary>Windows 起動時の自動起動</summary>
     public bool StartupEnabled { get; set; } = true;
 

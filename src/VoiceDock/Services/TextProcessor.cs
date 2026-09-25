@@ -14,6 +14,8 @@ public enum ProcessedKind
     Undo,
     /// <summary>キー操作の音声コマンド（送信・全選択など）。文字ではなくキーを送る</summary>
     Keys,
+    /// <summary>音声入力を止めるコマンド（「終了」「ストップ」など）</summary>
+    Stop,
 }
 
 /// <summary>送出するキー操作（修飾キー + キー）。VirtualKey は Windows の仮想キーコード。</summary>
@@ -179,6 +181,18 @@ public sealed class TextProcessor
         "undo", "undo that", "scratch that", "delete that",
     };
 
+    /// <summary>音声入力を止めるコマンド語。ホットキーを押さずに声だけで終えられるようにする。</summary>
+    private static readonly HashSet<string> StopWords = new()
+    {
+        "終了", "しゅうりょう", "音声入力終了", "音声入力を終了", "入力終了",
+        "音声入力停止", "音声入力を停止", "ストップ",
+    };
+
+    private static readonly HashSet<string> EnglishStopWords = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "stop listening", "stop dictation", "end dictation",
+    };
+
     /// <summary>直前の入力を取り消すコマンド語。</summary>
     private static readonly HashSet<string> UndoWords = new()
     {
@@ -194,6 +208,8 @@ public sealed class TextProcessor
     private static readonly Dictionary<string, (string Name, string Output)> EnglishCommandLookup = BuildLookup(EnglishCommands);
     private static readonly HashSet<string> UndoLookup = UndoWords.Select(KanaNormalizer.NormalizeKey).ToHashSet();
     private static readonly HashSet<string> EnglishUndoLookup = EnglishUndoWords.Select(KanaNormalizer.NormalizeKey).ToHashSet();
+    private static readonly HashSet<string> StopLookup = StopWords.Select(KanaNormalizer.NormalizeKey).ToHashSet();
+    private static readonly HashSet<string> EnglishStopLookup = EnglishStopWords.Select(KanaNormalizer.NormalizeKey).ToHashSet();
     private static readonly Dictionary<string, (string Name, KeyStroke Keys)> KeyCommandLookup = BuildLookup(KeyCommands);
     private static readonly Dictionary<string, (string Name, KeyStroke Keys)> EnglishKeyCommandLookup = BuildLookup(EnglishKeyCommands);
 
@@ -239,6 +255,10 @@ public sealed class TextProcessor
         var undoWords = english ? EnglishUndoLookup : UndoLookup;
         if (s.UndoEnabled && undoWords.Contains(lookupKey))
             return new ProcessedText("", ProcessedKind.Undo, "取り消し");
+
+        var stopWords = english ? EnglishStopLookup : StopLookup;
+        if (s.VoiceCommandsEnabled && stopWords.Contains(lookupKey))
+            return new ProcessedText("", ProcessedKind.Stop, "音声入力の終了");
 
         var commands = english ? EnglishCommandLookup : CommandLookup;
         if (s.VoiceCommandsEnabled && commands.TryGetValue(lookupKey, out var cmd))

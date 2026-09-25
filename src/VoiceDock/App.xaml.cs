@@ -166,6 +166,7 @@ public partial class App : Application
         _tray.UndoRequested += () => _controller!.UndoLastInjection("トレイメニュー");
         _tray.RegisterLastToDictionaryRequested += RegisterLastToDictionary;
         _tray.HistoryRequested += ShowHistory;
+        _controller.FrequentUndoDetected += SuggestRegisterUndone;
 
         // 認識言語: トレイから選べるようにし、設定画面で変えた場合もメニューに反映する
         _tray.SetLanguage(_settings.Current.RecognitionLanguage);
@@ -558,6 +559,21 @@ public partial class App : Application
             return;
         }
         ShowDictionary(prefill: last.Text);
+    }
+
+    /// <summary>
+    /// 同じ文章を何度も取り消したとき、誤認識しやすい語とみなして辞書への登録を勧める。
+    /// 通知をクリックすると、その文章を読みの欄に入れた状態で辞書管理を開く。
+    /// </summary>
+    private void SuggestRegisterUndone(UndoneText undone)
+    {
+        var shown = undone.Text.Replace("\r", "").Replace("\n", " ");
+        if (shown.Length > 30) shown = shown[..30] + "…";
+        ToastWindow.Show(
+            $"「{shown}」を {undone.Count} 回取り消しました。誤認識しやすい語なら、辞書に登録すると次から正しく入力されます。",
+            ToastKind.Info,
+            onClick: () => ShowDictionary(prefill: undone.Text),
+            actionHint: "クリックすると辞書に登録できます");
     }
 
     private void ShowHistory()

@@ -3,7 +3,7 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:ui="clr-namespace:VoiceDock.UI"
         Title="VoiceDock 認識履歴"
-        Width="640" Height="540" MinWidth="480" MinHeight="360"
+        Width="640" Height="560" MinWidth="480" MinHeight="380"
         Style="{StaticResource WindowStyle}"
         WindowStartupLocation="CenterScreen"
         Closed="Window_Closed">
@@ -13,45 +13,99 @@
     <Grid Margin="20,16">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto"/>
-            <RowDefinition Height="Auto"/>
             <RowDefinition Height="*"/>
-            <RowDefinition Height="Auto"/>
-            <RowDefinition Height="Auto"/>
         </Grid.RowDefinitions>
 
-        <TextBlock Grid.Row="0" Text="認識履歴" FontSize="18" FontWeight="Bold"/>
-        <TextBlock Grid.Row="1" Style="{StaticResource SubText}" Margin="0,4,0,12"
-                   Text="直近の音声入力の結果です（新しい順・最大 200 件）。入力欄が無くて入らなかった文章もここに残ります。履歴はアプリを終了すると消え、ファイルには保存しません。"/>
+        <TextBlock Grid.Row="0" Text="認識履歴" FontSize="18" FontWeight="Bold" Margin="0,0,0,8"/>
 
-        <Grid Grid.Row="2">
-            <DataGrid x:Name="Grid"
-                      AutoGenerateColumns="False" CanUserAddRows="False" CanUserDeleteRows="False"
-                      IsReadOnly="True" CanUserSortColumns="False" CanUserReorderColumns="False"
-                      SelectionUnit="FullRow" SelectionMode="Single"
-                      MouseDoubleClick="Grid_MouseDoubleClick"
-                      SelectionChanged="Grid_SelectionChanged"
-                      Background="{StaticResource PanelBrush}">
-                <DataGrid.Columns>
-                    <DataGridTextColumn Header="時刻" Binding="{Binding Time, StringFormat=HH:mm:ss}" Width="80"/>
-                    <DataGridTextColumn Header="入力先" Binding="{Binding AppLabel}" Width="120"/>
-                    <DataGridTextColumn Header="内容" Binding="{Binding Text, Converter={StaticResource OneLine}}" Width="*"/>
-                </DataGrid.Columns>
-            </DataGrid>
-            <TextBlock x:Name="EmptyText" Style="{StaticResource SubText}"
-                       HorizontalAlignment="Center" VerticalAlignment="Center" Margin="24,0"
-                       TextAlignment="Center" IsHitTestVisible="False"
-                       Text="まだ履歴がありません。音声入力を行うとここに表示されます。"/>
-        </Grid>
+        <TabControl Grid.Row="1" x:Name="Tabs">
+            <!-- ================= 認識履歴 ================= -->
+            <TabItem Header="認識履歴">
+                <Grid Margin="0,12,0,0">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="*"/>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                    </Grid.RowDefinitions>
 
-        <WrapPanel Grid.Row="3" Margin="0,10,0,0">
-            <Button x:Name="ReinjectButton" Content="もう一度入力" Style="{StaticResource PrimaryButton}"
-                    Margin="0,0,8,4" Click="Reinject_Click"
-                    ToolTip="最後に音声入力したアプリに切り替えて入力します（行をダブルクリックでも可）"/>
-            <Button x:Name="CopyButton" Content="コピー" Margin="0,0,8,4" Click="Copy_Click"/>
-            <Button x:Name="RegisterButton" Content="辞書に登録" Margin="0,0,8,4" Click="Register_Click"
-                    ToolTip="この文章を読みの欄に入れた状態で辞書管理を開きます"/>
-            <Button Content="履歴を消去" Margin="0,0,8,4" Click="Clear_Click"/>
-        </WrapPanel>
-        <TextBlock Grid.Row="4" x:Name="TargetText" Style="{StaticResource SubText}" Margin="0,4,0,0"/>
+                    <TextBlock Grid.Row="0" Style="{StaticResource SubText}" Margin="0,0,0,10"
+                               Text="直近の音声入力の結果です（新しい順・最大 200 件）。入力欄が無くて入らなかった文章もここに残ります。履歴はアプリを終了すると消え、ファイルには保存しません。"/>
+
+                    <Grid Grid.Row="1">
+                        <DataGrid x:Name="Grid"
+                                  AutoGenerateColumns="False" CanUserAddRows="False" CanUserDeleteRows="False"
+                                  IsReadOnly="True" CanUserSortColumns="False" CanUserReorderColumns="False"
+                                  SelectionUnit="FullRow" SelectionMode="Single"
+                                  MouseDoubleClick="Grid_MouseDoubleClick"
+                                  SelectionChanged="Grid_SelectionChanged"
+                                  Background="{StaticResource PanelBrush}">
+                            <DataGrid.Columns>
+                                <DataGridTextColumn Header="時刻" Binding="{Binding Time, StringFormat=HH:mm:ss}" Width="80"/>
+                                <DataGridTextColumn Header="入力先" Binding="{Binding AppLabel}" Width="120"/>
+                                <DataGridTextColumn Header="内容" Binding="{Binding Text, Converter={StaticResource OneLine}}" Width="*"/>
+                            </DataGrid.Columns>
+                        </DataGrid>
+                        <TextBlock x:Name="EmptyText" Style="{StaticResource SubText}"
+                                   HorizontalAlignment="Center" VerticalAlignment="Center" Margin="24,0"
+                                   TextAlignment="Center" IsHitTestVisible="False"
+                                   Text="まだ履歴がありません。音声入力を行うとここに表示されます。"/>
+                    </Grid>
+
+                    <WrapPanel Grid.Row="2" Margin="0,10,0,0">
+                        <Button x:Name="ReinjectButton" Content="もう一度入力" Style="{StaticResource PrimaryButton}"
+                                Margin="0,0,8,4" Click="Reinject_Click"
+                                ToolTip="最後に音声入力したアプリに切り替えて入力します（行をダブルクリックでも可）"/>
+                        <Button x:Name="CopyButton" Content="コピー" Margin="0,0,8,4" Click="Copy_Click"/>
+                        <Button x:Name="RegisterButton" Content="辞書に登録" Margin="0,0,8,4" Click="Register_Click"
+                                ToolTip="この文章を読みの欄に入れた状態で辞書管理を開きます"/>
+                        <Button Content="履歴を消去" Margin="0,0,8,4" Click="Clear_Click"
+                                ToolTip="認識履歴と、よく取り消す文章の集計をすべて消去します"/>
+                    </WrapPanel>
+                    <TextBlock Grid.Row="3" x:Name="TargetText" Style="{StaticResource SubText}" Margin="0,4,0,0"/>
+                </Grid>
+            </TabItem>
+
+            <!-- ================= よく取り消す文章 ================= -->
+            <TabItem Header="よく取り消す文章">
+                <Grid Margin="0,12,0,0">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="*"/>
+                        <RowDefinition Height="Auto"/>
+                    </Grid.RowDefinitions>
+
+                    <TextBlock Grid.Row="0" Style="{StaticResource SubText}" Margin="0,0,0,10"
+                               Text="音声入力の後に取り消した文章です（回数の多い順）。何度も取り消している文章は、誤認識しやすい語を含んでいる可能性があります。［辞書に登録］で、誤認識された部分だけを残して正しい表記を登録してください。集計はアプリを終了すると消え、ファイルには保存しません。"/>
+
+                    <Grid Grid.Row="1">
+                        <DataGrid x:Name="UndoneGrid"
+                                  AutoGenerateColumns="False" CanUserAddRows="False" CanUserDeleteRows="False"
+                                  IsReadOnly="True" CanUserSortColumns="False" CanUserReorderColumns="False"
+                                  SelectionUnit="FullRow" SelectionMode="Single"
+                                  MouseDoubleClick="UndoneGrid_MouseDoubleClick"
+                                  SelectionChanged="UndoneGrid_SelectionChanged"
+                                  Background="{StaticResource PanelBrush}">
+                            <DataGrid.Columns>
+                                <DataGridTextColumn Header="回数" Binding="{Binding Count}" Width="56"/>
+                                <DataGridTextColumn Header="最後に取り消した時刻" Binding="{Binding LastTime, StringFormat=HH:mm:ss}" Width="140"/>
+                                <DataGridTextColumn Header="内容" Binding="{Binding Text, Converter={StaticResource OneLine}}" Width="*"/>
+                            </DataGrid.Columns>
+                        </DataGrid>
+                        <TextBlock x:Name="UndoneEmptyText" Style="{StaticResource SubText}"
+                                   HorizontalAlignment="Center" VerticalAlignment="Center" Margin="24,0"
+                                   TextAlignment="Center" IsHitTestVisible="False"
+                                   Text="まだ取り消した文章はありません。「取り消し」「戻して」やホットキーで取り消すと、ここに集計されます。"/>
+                    </Grid>
+
+                    <WrapPanel Grid.Row="2" Margin="0,10,0,0">
+                        <Button x:Name="UndoneRegisterButton" Content="辞書に登録" Style="{StaticResource PrimaryButton}"
+                                Margin="0,0,8,4" Click="UndoneRegister_Click"
+                                ToolTip="この文章を読みの欄に入れた状態で辞書管理を開きます（行をダブルクリックでも可）"/>
+                        <Button x:Name="UndoneCopyButton" Content="コピー" Margin="0,0,8,4" Click="UndoneCopy_Click"/>
+                    </WrapPanel>
+                </Grid>
+            </TabItem>
+        </TabControl>
     </Grid>
 </Window>

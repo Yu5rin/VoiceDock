@@ -40,8 +40,11 @@ public sealed class SettingsService
     /// <summary>保存に失敗したときに発火（利用者へ知らせるため）。引数は理由の説明。</summary>
     public event Action<string>? SaveFailed;
 
-    /// <summary>初期化したときに発火。ホットキー等を登録し直すために使う。</summary>
-    public event Action? Reset;
+    /// <summary>
+    /// 初期化やバックアップからの復元で、設定が丸ごと置き換わったときに発火。
+    /// ホットキーやスタートアップ登録など、実行中の状態を合わせ直すために使う。
+    /// </summary>
+    public event Action? Replaced;
 
     public SettingsService(LogService log)
     {
@@ -114,7 +117,39 @@ public sealed class SettingsService
         }
         _log.Info("設定を初期状態に戻しました");
         Changed?.Invoke(snapshot);
-        Reset?.Invoke();
+        Replaced?.Invoke();
+    }
+
+    /// <summary>現在の設定を JSON にする（バックアップ用）。</summary>
+    public string ExportJson()
+    {
+        lock (_sync) return JsonSerializer.Serialize(Current, JsonOptions);
+    }
+
+    /// <summary>JSON を設定として解釈する。解釈できなければ null。</summary>
+    public static AppSettings? TryParse(string json)
+    {
+        try { return JsonSerializer.Deserialize<AppSettings>(json, JsonOptions); }
+        catch { return null; }
+    }
+
+    /// <summary>
+    /// バックアップから設定を丸ごと置き換える。
+    /// 設定ファイルと同じく、危険な値（更新の確認先など）は補正してから適用する。
+    /// </summary>
+    public void Restore(AppSettings restored)
+    {
+        AppSettings snapshot;
+        lock (_sync)
+        {
+            Current = restored;
+            Normalize(Current);
+            Save();
+            snapshot = Current;
+        }
+        _log.Info("バックアップから設定を復元しました");
+        Changed?.Invoke(snapshot);
+        Replaced?.Invoke();
     }
 
     /// <summary>
@@ -129,6 +164,10 @@ public sealed class SettingsService
             _log.Warn($"更新の確認先が許可されていない URL のため、既定値に戻しました: {s.UpdateApiUrl}");
             s.UpdateApiUrl = new AppSettings().UpdateApiUrl;
         }
+
+        // 対応していない言語コードが書かれていた場合は日本語に戻す
+        if (!RecognitionLanguages.IsSupported(s.RecognitionLanguage))
+            s.RecognitionLanguage = RecognitionLanguages.Japanese;
 
         // JSON から復元した辞書は、初期化子で指定した「大文字小文字を区別しない」比較を
         // 引き継がない。そのままだと Notepad と notepad が別扱いになり、

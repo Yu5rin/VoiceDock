@@ -139,88 +139,37 @@ public sealed class DictionaryService
         return text;
     }
 
-    /// <summary>CSV (UTF-8 BOM 付き、ヘッダー行あり) にエクスポートする。Excel での一括編集を想定。</summary>
+    /// <summary>CSV の見出し。以前の版で書き出した見出しも読み込み時に受け付ける。</summary>
+    private const string CsvHeaderWrong = "読み・誤認識語";
+    private const string CsvHeaderCorrect = "出したい表記";
+
+    /// <summary>CSV (UTF-8 BOM 付き、見出し行あり) にエクスポートする。Excel での一括編集を想定。</summary>
     public void ExportCsv(string path)
     {
-        var sb = new StringBuilder();
-        sb.AppendLine("読み・誤認識語,出したい表記");
-        lock (_sync)
-        {
-            foreach (var e in _entries)
-                sb.AppendLine($"{CsvEscape(e.Wrong)},{CsvEscape(e.Correct)}");
-        }
-        File.WriteAllText(path, sb.ToString(), new UTF8Encoding(encoderShouldEmitUTF8Identifier: true));
+        List<DictionaryEntry> entries;
+        lock (_sync) entries = _entries.ToList();
+        Csv.Write(path, CsvHeaderWrong, CsvHeaderCorrect, entries.Select(e => (e.Wrong, e.Correct)));
         _log.Info($"辞書を CSV にエクスポートしました: {path}");
     }
 
     /// <summary>CSV からインポートして辞書全体を置き換える。戻り値は取り込んだ件数。</summary>
     public int ImportCsv(string path)
     {
-        var text = File.ReadAllText(path, Encoding.UTF8);
-        var rows = ParseCsv(text);
-        var entries = new List<DictionaryEntry>();
-        foreach (var row in rows)
-        {
-            if (row.Count == 0) continue;
-            var wrong = row.ElementAtOrDefault(0)?.Trim() ?? "";
-            var correct = row.ElementAtOrDefault(1)?.Trim() ?? "";
-            // ヘッダー行は読み飛ばす（以前の版で書き出した見出しも受け付ける）
-            if ((wrong == "読み・誤認識語" && correct == "出したい表記") ||
-                (wrong == "誤認識語" && correct == "正しい語")) continue;
-            if (wrong.Length == 0 && correct.Length == 0) continue;
-            entries.Add(new DictionaryEntry { Wrong = wrong, Correct = correct });
-        }
+        var rows = Csv.Read(path, (a, b) =>
+            (a == CsvHeaderWrong && b == CsvHeaderCorrect) || (a == "誤認識語" && b == "正しい語"));
+        var entries = rows.Select(r => new DictionaryEntry { Wrong = r.A.Trim(), Correct = r.B.Trim() }).ToList();
         Replace(entries);
         _log.Info($"辞書を CSV からインポートしました: {path} ({entries.Count} 件)");
         return entries.Count;
     }
 
-    private static string CsvEscape(string s)
+    /// <summary>
+    /// バックアップから復元する。読み込みに失敗していた場合も、
+    /// 利用者が明示的に置き換えを選んだので保存を許可する。
+    /// </summary>
+    public void RestoreFrom(IEnumerable<DictionaryEntry> entries)
     {
-        if (s.Contains(',') || s.Contains('"') || s.Contains('\n') || s.Contains('\r'))
-            return $"\"{s.Replace("\"", "\"\"")}\"";
-        return s;
-    }
-
-    private static List<List<string>> ParseCsv(string text)
-    {
-        var rows = new List<List<string>>();
-        var row = new List<string>();
-        var field = new StringBuilder();
-        bool inQuotes = false;
-
-        for (int i = 0; i < text.Length; i++)
-        {
-            char c = text[i];
-            if (inQuotes)
-            {
-                if (c == '"')
-                {
-                    if (i + 1 < text.Length && text[i + 1] == '"') { field.Append('"'); i++; }
-                    else inQuotes = false;
-                }
-                else field.Append(c);
-            }
-            else
-            {
-                switch (c)
-                {
-                    case '"': inQuotes = true; break;
-                    case ',': row.Add(field.ToString()); field.Clear(); break;
-                    case '\r': break;
-                    case '\n':
-                        row.Add(field.ToString()); field.Clear();
-                        rows.Add(row); row = new List<string>();
-                        break;
-                    default: field.Append(c); break;
-                }
-            }
-        }
-        if (field.Length > 0 || row.Count > 0)
-        {
-            row.Add(field.ToString());
-            rows.Add(row);
-        }
-        return rows;
+        _loadFailed = false;
+        Replace(entries);
     }
 }

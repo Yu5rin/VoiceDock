@@ -44,6 +44,20 @@ public static class TextInjector
         }
     }
 
+    /// <summary>前面ウィンドウのハンドル（無ければ IntPtr.Zero）。</summary>
+    public static IntPtr GetForegroundWindowHandle() => GetForegroundWindow();
+
+    /// <summary>
+    /// 指定したウィンドウを前面に出す。最小化されていれば元に戻す。
+    /// ウィンドウが既に無い場合は false。
+    /// </summary>
+    public static bool TryActivateWindow(IntPtr hwnd)
+    {
+        if (hwnd == IntPtr.Zero || !IsWindow(hwnd)) return false;
+        if (IsIconic(hwnd)) ShowWindow(hwnd, SW_RESTORE);
+        return SetForegroundWindow(hwnd);
+    }
+
     /// <summary>
     /// 直前に入力した文字数ぶん BackSpace を送って取り消す。
     /// 対象アプリが入力を受け付けない場合は false。
@@ -444,6 +458,20 @@ public static class TextInjector
 
     [DllImport("user32.dll")]
     private static extern IntPtr GetForegroundWindow();
+
+    [DllImport("user32.dll")]
+    private static extern bool SetForegroundWindow(IntPtr hWnd);
+
+    [DllImport("user32.dll")]
+    private static extern bool IsWindow(IntPtr hWnd);
+
+    [DllImport("user32.dll")]
+    private static extern bool IsIconic(IntPtr hWnd);
+
+    [DllImport("user32.dll")]
+    private static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
+
+    private const int SW_RESTORE = 9;
 
     [DllImport("user32.dll")]
     private static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint processId);

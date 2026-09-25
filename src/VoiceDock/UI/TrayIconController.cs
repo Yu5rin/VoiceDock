@@ -1,20 +1,25 @@
 using System.Drawing;
 using System.Windows.Forms;
+using VoiceDock.Models;
 
 namespace VoiceDock.UI;
 
 /// <summary>
 /// タスクトレイ常駐アイコン。状態に応じて色を変え、
-/// 右クリックメニュー（音声入力 / 設定 / 辞書管理 / 定型文 / ログ / 認識エンジンの再起動 / 更新 / 終了）を提供する。
+/// 右クリックメニュー（音声入力 / 辞書登録 / 設定 / 辞書管理 / 定型文 / 認識履歴 / ログ / 認識エンジンの再起動 / 更新 / 終了）を提供する。
 /// </summary>
 public sealed class TrayIconController : IDisposable
 {
     private readonly NotifyIcon _notifyIcon;
     private readonly ToolStripMenuItem _recordItem;
     private readonly ToolStripMenuItem _updateItem;
+    private readonly ToolStripMenuItem _languageItem;
 
     public event Action? RecordToggleRequested;
     public event Action? UndoRequested;
+    public event Action? RegisterLastToDictionaryRequested;
+    public event Action? HistoryRequested;
+    public event Action<string>? LanguageSelected;
     public event Action? SettingsRequested;
     public event Action? DictionaryRequested;
     public event Action? SnippetRequested;
@@ -33,10 +38,26 @@ public sealed class TrayIconController : IDisposable
         _recordItem = CreateItem("音声入力を開始", () => RecordToggleRequested?.Invoke());
         menu.Items.Add(_recordItem);
         menu.Items.Add(CreateItem("直前の入力を取り消す", () => UndoRequested?.Invoke()));
+        // 誤認識に気づいたその場で辞書に登録できるようにする（辞書は育ててこそ効く）
+        menu.Items.Add(CreateItem("直前の入力を辞書に登録", () => RegisterLastToDictionaryRequested?.Invoke()));
+
+        // 認識言語。英文メールなどを書くときにすぐ切り替えられるよう、トレイから選べるようにする
+        _languageItem = new ToolStripMenuItem("認識言語");
+        foreach (var (code, label) in RecognitionLanguages.All)
+        {
+            var item = new ToolStripMenuItem(label) { Tag = code };
+            item.Click += (_, _) => LanguageSelected?.Invoke(code);
+            _languageItem.DropDownItems.Add(item);
+        }
+        // サブメニューは親の描画設定を引き継がないため、ダーク表示を明示する
+        _languageItem.DropDown.Renderer = new DarkMenuRenderer();
+        if (_languageItem.DropDown is ToolStripDropDownMenu dropDown) dropDown.ShowImageMargin = false;
+        menu.Items.Add(_languageItem);
         menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add(CreateItem("設定", () => SettingsRequested?.Invoke()));
         menu.Items.Add(CreateItem("辞書管理", () => DictionaryRequested?.Invoke()));
         menu.Items.Add(CreateItem("定型文", () => SnippetRequested?.Invoke()));
+        menu.Items.Add(CreateItem("認識履歴", () => HistoryRequested?.Invoke()));
         menu.Items.Add(CreateItem("ログ表示", () => LogRequested?.Invoke()));
         // ブラウザが落ちたまま戻らないときに、アプリを再起動せず立て直せるようにする
         menu.Items.Add(CreateItem("認識エンジンを再起動", () => RestartEngineRequested?.Invoke()));
@@ -66,6 +87,20 @@ public sealed class TrayIconController : IDisposable
     public void SetListening(bool listening)
     {
         _recordItem.Text = listening ? "音声入力を停止" : "音声入力を開始";
+    }
+
+    /// <summary>
+    /// 選択中の認識言語をメニューに反映する。
+    /// チェックマークは暗い背景で見えにくいため、項目名の先頭に印を付けて示す。
+    /// </summary>
+    public void SetLanguage(string code)
+    {
+        _languageItem.Text = $"認識言語: {RecognitionLanguages.LabelOf(code)}";
+        foreach (ToolStripMenuItem item in _languageItem.DropDownItems)
+        {
+            var label = RecognitionLanguages.LabelOf((string)item.Tag!);
+            item.Text = (string)item.Tag! == code ? $"✓  {label}" : $"     {label}";
+        }
     }
 
     /// <summary>更新が見つかっていることをメニュー上で示す。</summary>

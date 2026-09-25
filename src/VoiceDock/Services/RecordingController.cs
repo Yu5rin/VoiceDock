@@ -5,6 +5,12 @@ using VoiceDock.UI;
 
 namespace VoiceDock.Services;
 
+/// <summary>認識履歴の 1 件。</summary>
+/// <param name="Time">認識した時刻</param>
+/// <param name="Text">入力した文字（辞書の置き換え後）</param>
+/// <param name="App">入力先のアプリ（プロセス名）。入力欄が無く入らなかった場合は空</param>
+public sealed record RecognitionRecord(DateTime Time, string Text, string App);
+
 /// <summary>
 /// 認識の開始/停止と、認識結果の入力欄への流し込みを統括する。
 /// 実際の録音・認識はブラウザ(Web Speech API)が行い、本体は
@@ -58,6 +64,46 @@ public sealed class RecordingController : IDisposable
     /// <summary>直前に入力した先のアプリ（プロセス名）。別アプリでの誤爆を防ぐために使う。</summary>
     private string _lastInjectedApp = "";
 
+    /// <summary>認識履歴として保持する最大件数。</summary>
+    private const int MaxHistory = 200;
+
+    /// <summary>
+    /// 認識履歴（新しいものが先頭）。メモリにだけ持ち、ファイルには保存しない。
+    /// 認識したテキストをファイルに残すかどうかの設定とは独立して、アプリの終了で消える。
+    /// </summary>
+    private readonly LinkedList<RecognitionRecord> _history = new();
+
+    /// <summary>いま認識に使っている言語（認識中に設定が変わったかを判定するため）。</summary>
+    private string _activeLanguage = RecognitionLanguages.Japanese;
+
+    /// <summary>
+    /// 英語など単語をスペースで区切る言語で、次の入力の前にスペースが要るかどうか。
+    /// 区切りごとの認識結果をそのままつなぐと "hello" + "how are you" が
+    /// "hellohow are you" になってしまうため、続きの入力にはスペースを補う。
+    /// </summary>
+    private bool _spaceBeforeNext;
+
+    /// <summary><see cref="_spaceBeforeNext"/> が有効な入力先。別の入力先に移ったらリセットする。</summary>
+    private IntPtr _spaceWindow;
+
+    /// <summary>最後に文字を入力したウィンドウ。履歴から「もう一度入力」するときの入力先。</summary>
+    private IntPtr _lastTargetWindow;
+
+    /// <summary>最後に文字を入力したアプリの名前（画面表示用）。</summary>
+    public string LastTargetApp { get; private set; } = "";
+
+    /// <summary>認識履歴（新しいものが先頭）。</summary>
+    public IReadOnlyList<RecognitionRecord> History
+    {
+        get { lock (_sync) return _history.ToList(); }
+    }
+
+    /// <summary>認識履歴に 1 件追加されたときに発火。</summary>
+    public event Action<RecognitionRecord>? HistoryAdded;
+
+    /// <summary>認識履歴を消去したときに発火。</summary>
+    public event Action? HistoryCleared;
+
     /// <summary>入力先として観測したアプリ（プロセス名）。アプリ別設定の候補に使う。</summary>
     private readonly SortedSet<string> _seenApps = new(StringComparer.OrdinalIgnoreCase);
 
@@ -91,6 +137,19 @@ public sealed class RecordingController : IDisposable
         _bridge.LevelChanged += _overlay.UpdateLevel;
         _bridge.RecognitionError += OnRecognitionError;
         _bridge.RecognitionModeReported += OnRecognitionModeReported;
+        _settings.Changed += s => _dispatcher.BeginInvoke(() => OnSettingsChanged(s));
+    }
+
+    /// <summary>認識中に言語が変わったら、その場で新しい言語に切り替える。</summary>
+    private void OnSettingsChanged(AppSettings s)
+    {
+        lock (_sync)
+        {
+            if (!_listening || s.RecognitionLanguage == _activeLanguage) return;
+            _activeLanguage = s.RecognitionLanguage;
+            _ = _bridge.StartRecognitionAsync(s.PreferLocalRecognition, _activeLanguage);
+        }
+        _log.Info($"認識言語を切り替えました: {RecognitionLanguages.LabelOf(s.RecognitionLanguage)}");
     }
 
     /// <summary>ホットキー押下時の入口。UI スレッドで呼ぶこと。</summary>
@@ -158,7 +217,8 @@ public sealed class RecordingController : IDisposable
 
         _listening = true;
         _stoppedAtUtc = DateTime.MinValue;
-        _ = _bridge.StartRecognitionAsync(_settings.Current.PreferLocalRecognition);
+        _activeLanguage = _settings.Current.RecognitionLanguage;
+        _ = _bridge.StartRecognitionAsync(_settings.Current.PreferLocalRecognition, _activeLanguage);
         _tray.SetState(TrayState.Recording);
         _overlay.ShowOverlay();
         ResetSilenceTimer();
@@ -221,16 +281,83 @@ public sealed class RecordingController : IDisposable
             else
                 _log.Recognition(processed.Text);
 
-            Inject(processed.Text, isCommand: processed.Kind == ProcessedKind.Command);
+            bool isCommand = processed.Kind == ProcessedKind.Command;
+            bool spaced = RecognitionLanguages.UsesWordSpacing(_settings.Current.RecognitionLanguage);
+            var window = TextInjector.GetForegroundWindowHandle();
+            var output = spaced && !isCommand ? WithLeadingSpace(processed.Text, window) : processed.Text;
+
+            var app = Inject(output, isCommand);
+            if (spaced && app.Length > 0) RememberSpacing(output, isCommand, window);
+
+            // 話した内容は、入力に失敗した場合も含めて履歴に残す。
+            // 入力欄が無くて入らなかった文章も、あとから取り出せるようにするため。
+            if (!isCommand) AddHistory(processed.Text, app);
         }));
+    }
+
+    /// <summary>続きの入力であれば、単語がくっつかないよう先頭にスペースを補う。</summary>
+    private string WithLeadingSpace(string text, IntPtr window)
+    {
+        if (!_spaceBeforeNext || window != _spaceWindow || text.Length == 0) return text;
+        // 句読点や閉じ括弧で始まる場合は、前の語に続けるのでスペースは入れない
+        if (char.IsWhiteSpace(text[0]) || ".,!?;:)]}'\"".Contains(text[0])) return text;
+        return " " + text;
+    }
+
+    /// <summary>入力した内容から、次の入力の前にスペースが要るかを覚えておく。</summary>
+    private void RememberSpacing(string output, bool isCommand, IntPtr window)
+    {
+        _spaceWindow = window;
+        if (output.Length == 0) return;
+        char last = output[^1];
+        _spaceBeforeNext = isCommand
+            // 「@」「-」「/」のように語をつなぐ記号の後には空けない。句読点の後には空ける
+            ? ".,!?;:".Contains(last)
+            : !char.IsWhiteSpace(last);
+    }
+
+    private void AddHistory(string text, string app)
+    {
+        var record = new RecognitionRecord(DateTime.Now, text, app);
+        lock (_sync)
+        {
+            _history.AddFirst(record);
+            while (_history.Count > MaxHistory) _history.RemoveLast();
+        }
+        HistoryAdded?.Invoke(record);
+    }
+
+    /// <summary>認識履歴を消去する。</summary>
+    public void ClearHistory()
+    {
+        lock (_sync) _history.Clear();
+        HistoryCleared?.Invoke();
+    }
+
+    /// <summary>
+    /// 履歴の文字を、最後に音声入力したウィンドウへもう一度入力する。
+    /// 履歴画面のボタンから呼ぶため、その時点では VoiceDock の画面が前面にある。
+    /// 入力先を前面に戻してから送る。入力先が既に無い場合は false。
+    /// </summary>
+    public async Task<bool> ReinjectAsync(string text)
+    {
+        if (!TextInjector.TryActivateWindow(_lastTargetWindow)) return false;
+
+        // 前面が切り替わり、入力欄にフォーカスが戻るのを待つ
+        await Task.Delay(250);
+        Inject(text, isCommand: false);
+        _log.Info("履歴の文字をもう一度入力しました");
+        return true;
     }
 
     /// <summary>
     /// テキストを前面アプリへ入力する。入力方式はアプリ別設定があればそれを優先する。
     /// 入力欄が無い等で失敗した場合は何もしない（エラー通知なし）。
     /// </summary>
-    private void Inject(string text, bool isCommand)
+    /// <returns>入力できたアプリの名前。入力欄が無く入らなかった場合は空。</returns>
+    private string Inject(string text, bool isCommand)
     {
+        var window = TextInjector.GetForegroundWindowHandle();
         var app = TextInjector.GetForegroundProcessName();
         if (app.Length > 0)
         {
@@ -249,11 +376,14 @@ public sealed class RecordingController : IDisposable
             _log.Info("テキスト入力欄が見つからないため流し込みをスキップしました");
             _lastInjectedLength = 0;
             _lastInjectedApp = "";
-            return;
+            return "";
         }
 
         _lastInjectedLength = CountTextElements(text);
         _lastInjectedApp = app;
+        _lastTargetWindow = window;
+        LastTargetApp = app;
+        return app;
     }
 
     /// <summary>絵文字・結合文字を 1 文字として数える（BackSpace の回数に合わせるため）。</summary>

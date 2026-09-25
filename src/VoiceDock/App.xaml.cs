@@ -32,6 +32,8 @@ public partial class App : Application
     private SnippetWindow? _snippetWindow;
     private AppRulesWindow? _appRulesWindow;
     private LogWindow? _logWindow;
+    private HistoryWindow? _historyWindow;
+    private BackupService? _backup;
     private UpdateWindow? _updateWindow;
 
     /// <summary>起動時の確認で見つかった更新（トレイから開くまで保持する）。</summary>
@@ -99,6 +101,8 @@ public partial class App : Application
         else if (_snippets.RecoveredFromBackup)
             ToastWindow.Show("定型文ファイルが壊れていたため、バックアップから復帰しました。", ToastKind.Warning);
 
+        _backup = new BackupService(_settings, _dictionary, _snippets, _log);
+
         _tray = new TrayIconController();
         _tray.SettingsRequested += ShowSettings;
         _tray.DictionaryRequested += ShowDictionary;
@@ -158,6 +162,18 @@ public partial class App : Application
         _controller.ListeningChanged += listening => _tray!.SetListening(listening);
         _tray.RecordToggleRequested += () => _controller!.ToggleFromMenu();
         _tray.UndoRequested += () => _controller!.UndoLastInjection("トレイメニュー");
+        _tray.RegisterLastToDictionaryRequested += RegisterLastToDictionary;
+        _tray.HistoryRequested += ShowHistory;
+
+        // 認識言語: トレイから選べるようにし、設定画面で変えた場合もメニューに反映する
+        _tray.SetLanguage(_settings.Current.RecognitionLanguage);
+        _tray.LanguageSelected += code =>
+        {
+            if (_settings.Current.RecognitionLanguage == code) return;
+            _settings.Update(s => s.RecognitionLanguage = code);
+            ToastWindow.Show($"認識言語を{RecognitionLanguages.LabelOf(code)}に切り替えました。");
+        };
+        _settings.Changed += s => Dispatcher.BeginInvoke(() => _tray?.SetLanguage(s.RecognitionLanguage));
 
         // ブラウザ監視: 認識用ブラウザが落ちていたら自動再起動する
         _watchdog = new System.Windows.Threading.DispatcherTimer
@@ -241,8 +257,8 @@ public partial class App : Application
                 if (_hotkey != null) _hotkey.PushToTalk = s.HotkeyMode == HotkeyMode.PushToTalk;
             });
 
-        // 初期化したときは、ホットキーやスタートアップ登録もその場で戻す
-        _settings.Reset += () => Dispatcher.BeginInvoke(ApplyDefaultsToRuntime);
+        // 初期化・復元で設定が丸ごと変わったときは、ホットキーやスタートアップ登録もその場で合わせ直す
+        _settings.Replaced += () => Dispatcher.BeginInvoke(ApplySettingsToRuntime);
 
         // スタートアップ登録を設定に同期する
         try
@@ -339,10 +355,10 @@ public partial class App : Application
     }
 
     /// <summary>
-    /// 設定を初期状態に戻したあと、ホットキー・スタートアップ登録・認識用ブラウザを
-    /// その場で初期設定に合わせ直す。アプリの再起動を求めずに済むようにするため。
+    /// 設定の初期化・バックアップからの復元のあと、ホットキー・スタートアップ登録・
+    /// 認識用ブラウザをその場で新しい設定に合わせ直す。アプリの再起動を求めずに済むようにするため。
     /// </summary>
-    private void ApplyDefaultsToRuntime()
+    private void ApplySettingsToRuntime()
     {
         if (_settings == null) return;
         var s = _settings.Current;
@@ -354,9 +370,16 @@ public partial class App : Application
             if (HotkeySpec.TryParse(s.Hotkey, out var spec) && !_hotkey.TryRegister(spec))
                 ToastWindow.Show($"ホットキー {spec} は他のアプリと衝突しているため登録できませんでした。", ToastKind.Warning);
 
-            if (s.UndoEnabled && HotkeySpec.TryParse(s.UndoHotkey, out var undoSpec) &&
-                !_hotkey.TryRegisterUndo(undoSpec))
-                ToastWindow.Show($"取り消しのホットキー {undoSpec} は他のアプリと衝突しているため使えません。", ToastKind.Warning);
+            if (s.UndoEnabled && HotkeySpec.TryParse(s.UndoHotkey, out var undoSpec))
+            {
+                if (!_hotkey.TryRegisterUndo(undoSpec))
+                    ToastWindow.Show($"取り消しのホットキー {undoSpec} は他のアプリと衝突しているため使えません。", ToastKind.Warning);
+            }
+            else
+            {
+                // 復元した設定で取り消しが無効なら、前の登録が残らないよう解除する
+                _hotkey.UnregisterUndo();
+            }
         }
 
         try
@@ -368,7 +391,7 @@ public partial class App : Application
             _log?.Warn($"スタートアップ登録の同期に失敗しました: {ex.Message}");
         }
 
-        // 使用ブラウザの指定も既定へ戻るため、認識用ブラウザを開き直す
+        // 使用ブラウザの指定も変わりうるため、認識用ブラウザを開き直す
         _browser?.Restart();
     }
 
@@ -414,7 +437,7 @@ public partial class App : Application
         }
         _settingsWindow = new SettingsWindow(_settings, ApplyHotkey, ApplyUndoHotkey,
             ShowDictionary, ShowSnippets, ShowAppRules, () => _ = CheckForUpdateAsync(manual: true),
-            RestartBrowser, () => _bridge?.CurrentMicrophone);
+            RestartBrowser, () => _bridge?.CurrentMicrophone, _backup!, RestoreBackup);
         _settingsWindow.Show();
         _settingsWindow.Activate();
     }
@@ -446,6 +469,40 @@ public partial class App : Application
         }
     }
 
+    /// <summary>
+    /// バックアップの内容で設定・辞書・定型文を置き換える。
+    /// 辞書などの画面が開いていると、古い内容のまま上書き保存されてしまうため、先に閉じる。
+    /// </summary>
+    private bool RestoreBackup(BackupContents contents)
+    {
+        if (!TryCloseWindow(_dictionaryWindow) || !TryCloseWindow(_snippetWindow) || !TryCloseWindow(_appRulesWindow))
+        {
+            ToastWindow.Show("辞書・定型文などの画面を閉じてから、もう一度復元してください。", ToastKind.Warning);
+            return false;
+        }
+        try
+        {
+            _backup!.Apply(contents);
+            return true;
+        }
+        catch (Exception ex)
+        {
+            _log?.Error($"バックアップからの復元に失敗しました: {ex}");
+            ToastWindow.Show($"復元できませんでした。{UserMessage.Describe(ex)}", ToastKind.Error);
+            return false;
+        }
+    }
+
+    /// <summary>ウィンドウを閉じる。利用者が閉じるのを取りやめた場合は false。</summary>
+    private static bool TryCloseWindow(Window? window)
+    {
+        if (window is not { IsLoaded: true }) return true;
+        bool closed = false;
+        window.Closed += (_, _) => closed = true;
+        window.Close();
+        return closed;
+    }
+
     private void ShowSnippets()
     {
         if (_snippets == null) return;
@@ -454,7 +511,7 @@ public partial class App : Application
             _snippetWindow.Activate();
             return;
         }
-        _snippetWindow = new SnippetWindow(_snippets);
+        _snippetWindow = new SnippetWindow(_snippets, _log!);
         _snippetWindow.Show();
         _snippetWindow.Activate();
     }
@@ -472,17 +529,47 @@ public partial class App : Application
         _appRulesWindow.Activate();
     }
 
-    private void ShowDictionary()
+    private void ShowDictionary() => ShowDictionary(prefill: null);
+
+    /// <param name="prefill">読みの欄に入れておく文字（直前の入力から登録する場合）。</param>
+    private void ShowDictionary(string? prefill)
     {
         if (_dictionary == null) return;
-        if (_dictionaryWindow is { IsLoaded: true })
+        if (_dictionaryWindow is not { IsLoaded: true })
         {
-            _dictionaryWindow.Activate();
+            _dictionaryWindow = new DictionaryWindow(_dictionary, _log!);
+            _dictionaryWindow.Show();
+        }
+        if (prefill != null) _dictionaryWindow.PrefillWrong(prefill);
+        _dictionaryWindow.Activate();
+    }
+
+    /// <summary>
+    /// 直前に認識した文章を読みの欄に入れた状態で、辞書管理を開く。
+    /// 誤認識に気づいたときに、その場で辞書へ登録できるようにするため。
+    /// </summary>
+    private void RegisterLastToDictionary()
+    {
+        var last = _controller?.History.FirstOrDefault();
+        if (last == null)
+        {
+            ToastWindow.Show("まだ音声入力の履歴がありません。音声入力をしてから使ってください。");
             return;
         }
-        _dictionaryWindow = new DictionaryWindow(_dictionary, _log!);
-        _dictionaryWindow.Show();
-        _dictionaryWindow.Activate();
+        ShowDictionary(prefill: last.Text);
+    }
+
+    private void ShowHistory()
+    {
+        if (_controller == null) return;
+        if (_historyWindow is { IsLoaded: true })
+        {
+            _historyWindow.Activate();
+            return;
+        }
+        _historyWindow = new HistoryWindow(_controller, text => ShowDictionary(prefill: text));
+        _historyWindow.Show();
+        _historyWindow.Activate();
     }
 
     private void ShowLog()

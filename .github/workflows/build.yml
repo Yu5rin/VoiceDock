@@ -93,32 +93,43 @@ jobs:
         shell: pwsh
         run: Copy-Item publish/VoiceDock.exe "publish/VoiceDock-${{ steps.ver.outputs.tag }}-win-x64.exe"
 
+      # 本文は「変更点」と「ダウンロード」だけにし、アプリの説明・導入・更新の方法・動作条件・
+      # 注意事項は README に置く（CLAUDE.md「リリース」）。以前はここに導入や動作条件を書いていたが、
+      # README と同じ説明が版の数だけ並ぶうえ、アプリの更新画面にもそのまま表示されていたため外した。
+      # アプリの自動更新が照合する SHA256 は本文ではなく、GitHub がファイルごとに持つ digest を読んでいる
+      # （UpdateService.ParseRelease）。本文の表は人が確かめるためのもの。
+      # 本文はアプリの更新画面にそのまま表示される。以前は即時公開だったため、公開してから
+      # 「変更点」を書き換えるまでの間に更新を確認した利用者に仮の文言が見えていた。
+      # 下書きで作り、変更点を書き入れてから公開する（下書きは releases/latest に出ないので、
+      # 公開するまで自動更新の対象にならない）。
+      - name: リリース本文の組み立て
+        shell: pwsh
+        run: |
+          $tag = "${{ steps.ver.outputs.tag }}"
+          $file = Get-Item "publish/VoiceDock-$tag-win-x64.exe"
+          $sha = (Get-FileHash $file.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+          $inv = [System.Globalization.CultureInfo]::InvariantCulture
+          $size = if ($file.Length -ge 1MB) { ($file.Length / 1MB).ToString("0.0", $inv) + " MB" } else { ($file.Length / 1KB).ToString("0.0", $inv) + " KB" }
+          $lines = @(
+            "## 変更点"
+            ""
+            "（ここに変更点を書く）"
+            ""
+            "## ダウンロード"
+            ""
+            "| ファイル | サイズ | SHA256 |"
+            "| --- | --- | --- |"
+            "| $($file.Name) | $size | ``$sha`` |"
+            ""
+            "インストールと更新の方法は [README](https://github.com/Yu5rin/VoiceDock#インストールと更新) をご覧ください。"
+          )
+          $lines -join "`n" | Out-File -FilePath release-notes.md -Encoding utf8
+
       - name: GitHub Release の作成
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.ver.outputs.tag }}
-          name: VoiceDock ${{ steps.ver.outputs.tag }}
-          generate_release_notes: true
+          name: ${{ steps.ver.outputs.tag }}
           files: publish/VoiceDock-${{ steps.ver.outputs.tag }}-win-x64.exe
-          body: |
-            Web Speech API を用いた音声入力ツール VoiceDock の ${{ steps.ver.outputs.tag }} リリースです。
-            タスクトレイに常駐し、ホットキー（初期値 `Ctrl+Space`）で任意の Windows アプリの入力欄に音声で直接入力できます。
-
-            ## 導入
-            1. `VoiceDock-${{ steps.ver.outputs.tag }}-win-x64.exe` をダウンロードし、任意の場所に置いて実行します（署名なし・インストーラー不要）。
-            2. タスクトレイにマイクのアイコンが表示されます。裏で認識用ブラウザが起動します（画面には出ません）。
-            3. テキスト入力欄にカーソルを置き、`Ctrl+Space` を押して話すと文字が入力されます。もう一度押すと停止します。
-
-            設定・辞書管理・ログはトレイアイコンの右クリックメニューから開けます。
-
-            ## 動作条件
-            - Windows 10 / 11
-            - Microsoft Edge または Google Chrome（Windows の既定ブラウザに追従。設定で明示指定も可能）
-            - インターネット接続（Web Speech API はクラウド認識のため）
-
-            ## ご注意
-            - 音声はブラウザの音声認識サービス（クラウド）に送信されます。機密性の高い内容の取り扱いにはご注意ください。
-            - 署名なし exe のため、初回実行時に SmartScreen の警告が出る場合があります。
-            - 辞書のエクスポート CSV には社内用語・人名が含まれます。保存先・共有方法にご注意ください。
-
-            詳細は [README](https://github.com/Yu5rin/VoiceDock/blob/main/README.md) を参照してください。
+          body_path: release-notes.md
+          draft: true

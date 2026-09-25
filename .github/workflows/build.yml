@@ -98,7 +98,10 @@ jobs:
       # README と同じ説明が版の数だけ並ぶうえ、アプリの更新画面にもそのまま表示されていたため外した。
       # アプリの自動更新が照合する SHA256 は本文ではなく、GitHub がファイルごとに持つ digest を読んでいる
       # （UpdateService.ParseRelease）。本文の表は人が確かめるためのもの。
-      # 本文は更新画面にそのまま表示されるので、公開したらすぐに「変更点」を書き換えること。
+      # 本文はアプリの更新画面にそのまま表示される。以前は即時公開だったため、公開してから
+      # 「変更点」を書き換えるまでの間に更新を確認した利用者に仮の文言が見えていた。
+      # 下書きで作り、変更点を書き入れてから公開する（下書きは releases/latest に出ないので、
+      # 公開するまで自動更新の対象にならない）。
       - name: リリース本文の組み立て
         shell: pwsh
         run: |
@@ -129,3 +132,4 @@ jobs:
           name: ${{ steps.ver.outputs.tag }}
           files: publish/VoiceDock-${{ steps.ver.outputs.tag }}-win-x64.exe
           body_path: release-notes.md
+          draft: true

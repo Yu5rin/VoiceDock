@@ -1,7 +1,6 @@
 using System.Collections.ObjectModel;
 using System.ComponentModel;
 using System.Linq;
-using System.Runtime.CompilerServices;
 using System.Windows;
 using VoiceDock.Models;
 using VoiceDock.Services;
@@ -9,34 +8,51 @@ using VoiceDock.Services;
 namespace VoiceDock.UI;
 
 /// <summary>
-/// アプリ（プロセス名）ごとの入力方式を管理する画面。変更は即時保存する。
+/// アプリ（プロセス名）ごとに、入力方式と「改行」の送り方を上書きする画面。変更は即時保存する。
 /// </summary>
 public partial class AppRulesWindow : Window
 {
-    /// <summary>1 行ぶんの表示用モデル。入力方式の変更を即座に保存へ反映する。</summary>
+    /// <summary>入力方式の選択肢（先頭は「既定に従う」）。</summary>
+    private static readonly InputMethod?[] MethodChoices = { null, InputMethod.SendInput, InputMethod.Clipboard };
+
+    /// <summary>改行の送り方の選択肢（先頭は「既定に従う」）。</summary>
+    private static readonly NewlineMode?[] NewlineChoices =
+        { null, NewlineMode.ShiftEnter, NewlineMode.Enter, NewlineMode.AltEnter };
+
+    /// <summary>1 行ぶんの表示用モデル。選択の変更を即座に保存へ反映する。</summary>
     public sealed class Row : INotifyPropertyChanged
     {
         private int _methodIndex;
+        private int _newlineIndex;
 
         public required string AppName { get; init; }
 
-        /// <summary>0 = 直接キー入力 / 1 = クリップボード貼り付け</summary>
+        /// <summary>0 = 既定に従う / 1 = 直接キー入力 / 2 = クリップボード貼り付け</summary>
         public int MethodIndex
         {
             get => _methodIndex;
-            set
-            {
-                if (_methodIndex == value) return;
-                _methodIndex = value;
-                PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(MethodIndex)));
-                Changed?.Invoke();
-            }
+            set => Set(ref _methodIndex, value, nameof(MethodIndex));
         }
 
-        /// <summary>入力方式が変更されたときに呼ばれる（保存用）。</summary>
+        /// <summary>0 = 既定に従う / 1 = Shift+Enter / 2 = Enter / 3 = Alt+Enter</summary>
+        public int NewlineIndex
+        {
+            get => _newlineIndex;
+            set => Set(ref _newlineIndex, value, nameof(NewlineIndex));
+        }
+
+        /// <summary>選択が変更されたときに呼ばれる（保存用）。</summary>
         public Action? Changed { get; init; }
 
         public event PropertyChangedEventHandler? PropertyChanged;
+
+        private void Set(ref int field, int value, string name)
+        {
+            if (field == value) return;
+            field = value;
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(name));
+            Changed?.Invoke();
+        }
     }
 
     private readonly SettingsService _settings;
@@ -49,13 +65,22 @@ public partial class AppRulesWindow : Window
         AppTheme.ApplyToWindow(this);
         _settings = settings;
 
-        foreach (var kv in settings.Current.AppInputMethods.OrderBy(k => k.Key))
-            _rows.Add(CreateRow(kv.Key, kv.Value));
+        var s = settings.Current;
+        var apps = s.AppInputMethods.Keys.Concat(s.AppNewlineModes.Keys)
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .OrderBy(a => a, StringComparer.OrdinalIgnoreCase);
+        foreach (var app in apps)
+        {
+            var row = CreateRow(app);
+            row.MethodIndex = s.AppInputMethods.TryGetValue(app, out var m) ? Array.IndexOf(MethodChoices, m) : 0;
+            row.NewlineIndex = s.AppNewlineModes.TryGetValue(app, out var n) ? Array.IndexOf(NewlineChoices, n) : 0;
+            _rows.Add(row);
+        }
         Grid.ItemsSource = _rows;
         _rows.CollectionChanged += (_, _) => UpdateEmptyState();
 
         // 入力先として使ったことのあるアプリを候補に出す（未登録のもののみ）
-        foreach (var app in knownApps.Where(a => !settings.Current.AppInputMethods.ContainsKey(a)))
+        foreach (var app in knownApps.Where(a => !_rows.Any(r => string.Equals(r.AppName, a, StringComparison.OrdinalIgnoreCase))))
             AppCombo.Items.Add(app);
 
         _loading = false;
@@ -65,12 +90,7 @@ public partial class AppRulesWindow : Window
     private void UpdateEmptyState() =>
         EmptyText.Visibility = _rows.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
 
-    private Row CreateRow(string appName, InputMethod method) => new()
-    {
-        AppName = appName,
-        MethodIndex = method == InputMethod.Clipboard ? 1 : 0,
-        Changed = Persist,
-    };
+    private Row CreateRow(string appName) => new() { AppName = appName, Changed = Persist };
 
     private void Add_Click(object sender, RoutedEventArgs e)
     {
@@ -83,15 +103,15 @@ public partial class AppRulesWindow : Window
 
         if (_rows.Any(r => string.Equals(r.AppName, name, StringComparison.OrdinalIgnoreCase)))
         {
-            ToastWindow.Show($"「{name}」は既に登録されています。", ToastKind.Warning);
+            StatusText.Text = $"「{name}」は既に一覧にあります。";
             return;
         }
 
-        // 直接入力で困っているケースが大半のため、既定はクリップボード貼り付けにする
-        _rows.Add(CreateRow(name, InputMethod.Clipboard));
+        // 何を変えたいかはアプリによって違うため、どちらも「既定に従う」で追加し、選んでもらう
+        _rows.Add(CreateRow(name));
         AppCombo.Items.Remove(name);
         AppCombo.Text = "";
-        Persist();
+        StatusText.Text = $"「{name}」を追加しました。入力方式か改行の送り方を選んでください（両方「既定に従う」のままなら保存されません）。";
     }
 
     private void Delete_Click(object sender, RoutedEventArgs e)
@@ -104,10 +124,17 @@ public partial class AppRulesWindow : Window
     private void Persist()
     {
         if (_loading) return;
-        var map = _rows.ToDictionary(
-            r => r.AppName,
-            r => r.MethodIndex == 1 ? InputMethod.Clipboard : InputMethod.SendInput,
-            StringComparer.OrdinalIgnoreCase);
-        _settings.Update(s => s.AppInputMethods = map);
+        var methods = new Dictionary<string, InputMethod>(StringComparer.OrdinalIgnoreCase);
+        var newlines = new Dictionary<string, NewlineMode>(StringComparer.OrdinalIgnoreCase);
+        foreach (var r in _rows)
+        {
+            if (MethodChoices.ElementAtOrDefault(r.MethodIndex) is { } m) methods[r.AppName] = m;
+            if (NewlineChoices.ElementAtOrDefault(r.NewlineIndex) is { } n) newlines[r.AppName] = n;
+        }
+        _settings.Update(s =>
+        {
+            s.AppInputMethods = methods;
+            s.AppNewlineModes = newlines;
+        });
     }
 }

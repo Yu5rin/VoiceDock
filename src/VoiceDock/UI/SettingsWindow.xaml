@@ -85,12 +85,12 @@
                                    Style="{StaticResource SubText}" Margin="0,2,0,6"/>
                         <ComboBox x:Name="InputMethodCombo" SelectionChanged="InputMethodCombo_SelectionChanged"/>
 
-                        <TextBlock Text="特定のアプリだけ入力方式を変えることもできます"
+                        <TextBlock Text="特定のアプリだけ、入力方式や「改行」の送り方を変えることもできます"
                                    Style="{StaticResource SubText}" Margin="0,8,0,6"/>
-                        <Button Content="アプリ別の入力方式を設定" HorizontalAlignment="Left" Click="OpenAppRules_Click"/>
+                        <Button Content="アプリ別の設定" HorizontalAlignment="Left" Click="OpenAppRules_Click"/>
 
                         <TextBlock Text="「改行」の送り方" Margin="0,14,0,0"/>
-                        <TextBlock Text="Shift+Enter はメモ帳やエディタを含む大半のアプリで改行になり、Enter が「送信」になるチャットアプリ（Claude Desktop・Slack・Teams 等）でも誤送信しません。Excel のセル内改行だけ Alt+Enter を選んでください"
+                        <TextBlock Text="Shift+Enter はメモ帳やエディタを含む大半のアプリで改行になり、Enter が「送信」になるチャットアプリ（Claude Desktop・Slack・Teams 等）でも誤送信しません。Excel のセル内改行のようにアプリによって変えたい場合は、上の「アプリ別の設定」で指定できます"
                                    Style="{StaticResource SubText}" Margin="0,2,0,6"/>
                         <ComboBox x:Name="NewlineCombo" SelectionChanged="NewlineCombo_SelectionChanged"/>
 

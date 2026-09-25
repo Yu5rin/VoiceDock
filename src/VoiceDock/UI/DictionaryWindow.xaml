@@ -2,7 +2,7 @@
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         Title="VoiceDock 辞書管理"
-        Width="620" Height="680" MinWidth="480" MinHeight="520"
+        Width="700" Height="720" MinWidth="540" MinHeight="560"
         Style="{StaticResource WindowStyle}"
         WindowStartupLocation="CenterScreen"
         Closing="Window_Closing">
@@ -34,6 +34,7 @@
                     <RowDefinition Height="Auto"/>
                     <RowDefinition Height="Auto"/>
                     <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="Auto"/>
                 </Grid.RowDefinitions>
 
                 <TextBlock Grid.Row="0" Grid.Column="0" Text="読み・誤認識語" Style="{StaticResource FieldLabel}"/>
@@ -45,7 +46,11 @@
                 <TextBox Grid.Row="1" Grid.Column="2" x:Name="CorrectBox"
                          ToolTip="例: 山田 / 請求No."/>
 
-                <DockPanel Grid.Row="2" Grid.ColumnSpan="3" Margin="0,10,0,0" LastChildFill="True">
+                <CheckBox Grid.Row="2" Grid.ColumnSpan="3" x:Name="WholeOnlyCheck" Margin="0,10,0,0"
+                          Content="話した言葉全体が一致したときだけ置き換える"
+                          ToolTip="「角 → Kado」のような短い語は、「三角」「角度」の中にも当たってしまいます。オンにすると「角」とだけ話したときに限り置き換えます"/>
+
+                <DockPanel Grid.Row="3" Grid.ColumnSpan="3" Margin="0,10,0,0" LastChildFill="True">
                     <Button x:Name="PrimaryButton" Content="追加" Style="{StaticResource PrimaryButton}"
                             Click="Primary_Click" ToolTip="Enter キーでも実行できます"/>
                     <Button x:Name="NewButton" Content="新規入力" Margin="8,0,0,0" Click="New_Click"
@@ -82,6 +87,9 @@
                 <DataGrid.Columns>
                     <DataGridTextColumn Header="読み・誤認識語" Binding="{Binding Wrong}" Width="*"/>
                     <DataGridTextColumn Header="出したい表記" Binding="{Binding Correct}" Width="*"/>
+                    <DataGridTextColumn Header="一致" Binding="{Binding MatchLabel}" Width="72"/>
+                    <DataGridTextColumn Header="使用回数" Binding="{Binding UseCount}" Width="72"/>
+                    <DataGridTextColumn Header="最後に使った日" Binding="{Binding LastUsed, StringFormat=yyyy/MM/dd}" Width="100"/>
                 </DataGrid.Columns>
             </DataGrid>
             <TextBlock x:Name="EmptyText" Style="{StaticResource SubText}"
@@ -96,7 +104,7 @@
             <Button Content="CSV から読み込む" Margin="0,0,8,4" Click="Import_Click"/>
         </WrapPanel>
         <TextBlock Grid.Row="6" Style="{StaticResource SubText}" Margin="0,2,0,0"
-                   Text="Excel の 2 列（読み・表記）をコピーし、一覧を選んで Ctrl+V で一括登録することもできます。同じ読みがあれば表記を上書きします。"/>
+                   Text="Excel の 2 列（読み・表記）をコピーし、一覧を選んで Ctrl+V で一括登録することもできます。3 列目に「全体のみ」と書いた行は、話した言葉全体が一致したときだけ置き換えます。同じ読みがあれば上書きします。使用回数は、この画面を開いた時点の回数です。"/>
 
         <!-- 試し入力 -->
         <Border Grid.Row="7" Style="{StaticResource FormPanel}" Margin="0,12,0,0">

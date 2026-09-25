@@ -422,6 +422,26 @@ public static class TextInjector
         }
     }
 
+    /// <summary>
+    /// 前面の入力欄の IME がオンかどうか（動作チェック画面で表示する）。
+    /// 入力欄が無い・IME が無い場合は null。
+    /// </summary>
+    public static bool? GetForegroundImeOpen()
+    {
+        try
+        {
+            var focused = GetFocusedControl();
+            if (focused == IntPtr.Zero) return null;
+            IntPtr imeWnd = ImmGetDefaultIMEWnd(focused);
+            if (imeWnd == IntPtr.Zero) return null;
+            return SendMessage(imeWnd, WM_IME_CONTROL, (IntPtr)IMC_GETOPENSTATUS, IntPtr.Zero) != IntPtr.Zero;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
     /// <summary>音声入力のあいだ IME をオフにしている入力先（既定 IME ウィンドウ）。</summary>
     private static readonly HashSet<IntPtr> SuppressedImeWindows = new();
 

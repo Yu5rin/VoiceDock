@@ -126,7 +126,14 @@ public partial class DictionaryWindow : Window
             _rows.Remove(duplicate);
         }
 
-        var entry = new DictionaryEntry { Wrong = wrong, Correct = correct };
+        var entry = new DictionaryEntry { Wrong = wrong, Correct = correct, WholeOnly = WholeOnlyCheck.IsChecked == true };
+        // 編集・上書きのときは、それまでの使用回数を引き継ぐ
+        var previous = new[] { _editing, duplicate }.Where(x => x != null).OrderByDescending(x => x!.UseCount).FirstOrDefault();
+        if (previous != null)
+        {
+            entry.UseCount = previous.UseCount;
+            entry.LastUsed = previous.LastUsed;
+        }
         bool updated = _editing != null;
         if (_editing != null && _rows.IndexOf(_editing) is var index and >= 0)
             _rows[index] = entry;
@@ -150,6 +157,7 @@ public partial class DictionaryWindow : Window
         _editing = null;
         WrongBox.Text = "";
         CorrectBox.Text = "";
+        WholeOnlyCheck.IsChecked = false;
         PrimaryButton.Content = "追加";
         FormStatus.Text = "";
         _loadingForm = false;
@@ -161,6 +169,7 @@ public partial class DictionaryWindow : Window
         _editing = entry;
         WrongBox.Text = entry.Wrong;
         CorrectBox.Text = entry.Correct;
+        WholeOnlyCheck.IsChecked = entry.WholeOnly;
         PrimaryButton.Content = "更新";
         FormStatus.Text = "選択した項目を編集しています。［新規入力］で新しく登録する状態に戻ります。";
         _loadingForm = false;
@@ -172,7 +181,8 @@ public partial class DictionaryWindow : Window
         var wrong = WrongBox.Text.Trim();
         var correct = CorrectBox.Text.Trim();
         if (_editing == null) return wrong.Length > 0 || correct.Length > 0;
-        return wrong != _editing.Wrong || correct != _editing.Correct;
+        return wrong != _editing.Wrong || correct != _editing.Correct ||
+               (WholeOnlyCheck.IsChecked == true) != _editing.WholeOnly;
     }
 
     // ───────────── 一覧 ─────────────
@@ -289,18 +299,22 @@ public partial class DictionaryWindow : Window
             var cells = lineRaw.TrimEnd('\r').Split('\t');
             var wrong = cells.ElementAtOrDefault(0)?.Trim() ?? "";
             var correct = cells.ElementAtOrDefault(1)?.Trim() ?? "";
+            bool wholeOnly = DictionaryService.ParseWholeOnly(cells.ElementAtOrDefault(2));
             if (wrong.Length == 0 || correct.Length == 0) continue;
 
+            var entry = new DictionaryEntry { Wrong = wrong, Correct = correct, WholeOnly = wholeOnly };
             var key = KanaNormalizer.NormalizeKey(wrong);
             var existing = _rows.FirstOrDefault(r => KanaNormalizer.NormalizeKey(r.Wrong) == key);
             if (existing != null)
             {
-                _rows[_rows.IndexOf(existing)] = new DictionaryEntry { Wrong = wrong, Correct = correct };
+                entry.UseCount = existing.UseCount;
+                entry.LastUsed = existing.LastUsed;
+                _rows[_rows.IndexOf(existing)] = entry;
                 updated++;
             }
             else
             {
-                _rows.Add(new DictionaryEntry { Wrong = wrong, Correct = correct });
+                _rows.Add(entry);
                 added++;
             }
         }

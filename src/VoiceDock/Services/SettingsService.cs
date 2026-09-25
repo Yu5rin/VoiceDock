@@ -176,15 +176,17 @@ public sealed class SettingsService
         // JSON から復元した辞書は、初期化子で指定した「大文字小文字を区別しない」比較を
         // 引き継がない。そのままだと Notepad と notepad が別扱いになり、
         // アプリ別の入力方式が効かなくなるため、毎回作り直す。
-        var map = s.AppInputMethods;
-        if (map is null)
-        {
-            s.AppInputMethods = new Dictionary<string, InputMethod>(StringComparer.OrdinalIgnoreCase);
-        }
-        else if (!ReferenceEquals(map.Comparer, StringComparer.OrdinalIgnoreCase))
-        {
-            s.AppInputMethods = new Dictionary<string, InputMethod>(map, StringComparer.OrdinalIgnoreCase);
-        }
+        s.AppInputMethods = WithIgnoreCase(s.AppInputMethods);
+        s.AppNewlineModes = WithIgnoreCase(s.AppNewlineModes);
+    }
+
+    /// <summary>アプリ名をキーにした表を、大文字小文字を区別しない比較で作り直す（null なら空にする）。</summary>
+    private static Dictionary<string, T> WithIgnoreCase<T>(Dictionary<string, T>? map)
+    {
+        if (map is null) return new Dictionary<string, T>(StringComparer.OrdinalIgnoreCase);
+        return ReferenceEquals(map.Comparer, StringComparer.OrdinalIgnoreCase)
+            ? map
+            : new Dictionary<string, T>(map, StringComparer.OrdinalIgnoreCase);
     }
 
     /// <summary>更新の確認先として許可する URL か（HTTPS かつ GitHub のみ）。</summary>

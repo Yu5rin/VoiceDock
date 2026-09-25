@@ -47,7 +47,7 @@
                         <Separator Margin="0,16" Background="{StaticResource BorderBrush}"/>
 
                         <TextBlock Text="直前の入力を取り消す" FontWeight="Bold"/>
-                        <TextBlock Text="誤認識をやり直すための機能です。「とりけし」と発話するか、下のホットキーで、直前に入力した分だけ削除します"
+                        <TextBlock Text="誤認識をやり直すための機能です。「とりけし」「戻して」などと発話するか、下のホットキーで、直前に入力した分だけ削除します"
                                    Style="{StaticResource SubText}" Margin="0,2,0,6"/>
                         <CheckBox x:Name="UndoCheck" Content="取り消しを有効にする"
                                   Checked="Option_Changed" Unchecked="Option_Changed"/>

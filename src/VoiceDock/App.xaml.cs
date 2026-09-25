@@ -316,14 +316,13 @@ public partial class App : Application
                 return;
             }
 
-            // 起動時の自動確認でウィンドウを前面に出すと、作業中に割り込んでしまう。
-            // 自動のときは通知だけにとどめ、開くかどうかは利用者に委ねる。
+            // 起動時の自動確認で見つかった場合も、更新画面を開いて知らせる。
+            // トースト通知だけでは見落とされやすく、古い版を使い続けてしまうため。
+            // 「あとで」で閉じても、トレイメニューの「更新を確認」から開き直せるよう保持しておく。
             if (!manual)
             {
                 _pendingUpdate = info;
                 _tray?.SetUpdateAvailable(true);
-                ToastWindow.Show($"新しいバージョン {info.Version} が利用できます。トレイメニューの「更新を確認」から更新できます。");
-                return;
             }
 
             ShowUpdateWindow(info);

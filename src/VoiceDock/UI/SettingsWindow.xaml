@@ -129,6 +129,15 @@
 
                         <Separator Margin="0,16" Background="{StaticResource BorderBrush}"/>
 
+                        <TextBlock Text="認識言語" FontWeight="Bold"/>
+                        <TextBlock Text="話す言語を選びます。トレイメニューの「認識言語」からも切り替えられ、音声入力中に変えてもその場で切り替わります"
+                                   Style="{StaticResource SubText}" Margin="0,2,0,6"/>
+                        <ComboBox x:Name="LanguageCombo" SelectionChanged="LanguageCombo_SelectionChanged"/>
+                        <TextBlock Text="英語では、区切りごとの認識結果の間にスペースを自動で入れます。音声コマンドは「new line」「new paragraph」「period」「comma」「question mark」、取り消しは「undo」「scratch that」が使えます"
+                                   Style="{StaticResource SubText}" Margin="0,4,0,0" TextWrapping="Wrap"/>
+
+                        <Separator Margin="0,16" Background="{StaticResource BorderBrush}"/>
+
                         <TextBlock Text="認識エンジン" FontWeight="Bold"/>
                         <TextBlock Text="認識はブラウザの Web Speech API で行います（日本語）"
                                    Style="{StaticResource SubText}" Margin="0,2,0,6"/>
@@ -172,6 +181,18 @@
                         <ComboBox x:Name="UpdateModeCombo" SelectionChanged="UpdateModeCombo_SelectionChanged"/>
                         <Button Content="今すぐ更新を確認" HorizontalAlignment="Left" Margin="0,8,0,0"
                                 Click="CheckUpdate_Click"/>
+
+                        <Separator Margin="0,16" Background="{StaticResource BorderBrush}"/>
+
+                        <TextBlock Text="バックアップ" FontWeight="Bold"/>
+                        <TextBlock Text="設定・辞書・定型文をまとめて 1 つのファイルに保存し、別の PC や再インストール後に復元できます"
+                                   Style="{StaticResource SubText}" Margin="0,2,0,6"/>
+                        <WrapPanel>
+                            <Button Content="バックアップを保存" Margin="0,0,8,4" Click="SaveBackup_Click"/>
+                            <Button Content="バックアップから復元" Margin="0,0,8,4" Click="RestoreBackup_Click"/>
+                        </WrapPanel>
+                        <TextBlock Text="保存したファイルには辞書（社内用語・人名）や定型文（住所など）が含まれます。保存先や受け渡しの方法に注意してください"
+                                   Style="{StaticResource SubText}" Margin="0,2,0,0" TextWrapping="Wrap"/>
 
                         <Separator Margin="0,16" Background="{StaticResource BorderBrush}"/>
 

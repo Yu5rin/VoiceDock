@@ -43,10 +43,13 @@ public sealed class TextProcessor
         ["タブ"] = ("タブ", "\t"),
 
         // 句読点
+        // 「まる」「てん」は単独で話すと漢字の「丸」「点」で認識されることが多い
         ["まる"] = ("句点", "。"),
+        ["丸"] = ("句点", "。"),
         ["マル"] = ("句点", "。"),
         ["句点"] = ("句点", "。"),
         ["てん"] = ("読点", "、"),
+        ["点"] = ("読点", "、"),
         ["テン"] = ("読点", "、"),
         ["読点"] = ("読点", "、"),
         ["びっくり"] = ("感嘆符", "！"),
@@ -55,6 +58,7 @@ public sealed class TextProcessor
         ["疑問符"] = ("疑問符", "？"),
         ["中点"] = ("中点", "・"),
         ["なかぐろ"] = ("中点", "・"),
+        ["中黒"] = ("中点", "・"),
 
         // 記号
         ["アットマーク"] = ("アットマーク", "@"),
@@ -77,11 +81,43 @@ public sealed class TextProcessor
         ["イコール"] = ("イコール", "="),
         ["アスタリスク"] = ("アスタリスク", "*"),
         ["かっこ"] = ("括弧", "（）"),
+        ["括弧"] = ("括弧", "（）"),
         ["カッコ"] = ("括弧", "（）"),
         ["かぎかっこ"] = ("鉤括弧", "「」"),
+        ["かぎ括弧"] = ("鉤括弧", "「」"),
+        ["鉤括弧"] = ("鉤括弧", "「」"),
         ["カギカッコ"] = ("鉤括弧", "「」"),
         ["矢印"] = ("矢印", "→"),
         ["やじるし"] = ("矢印", "→"),
+    };
+
+    /// <summary>
+    /// 英語で認識しているときの音声コマンド。日本語のコマンド語は英語の認識では
+    /// 聞き取られないため、改行や句読点を英語で言えるようにする。
+    /// </summary>
+    private static readonly Dictionary<string, (string Name, string Output)> EnglishCommands =
+        new(StringComparer.OrdinalIgnoreCase)
+        {
+            ["new line"] = ("改行", "\n"),
+            ["newline"] = ("改行", "\n"),
+            ["new paragraph"] = ("段落", "\n\n"),
+            ["period"] = ("ピリオド", "."),
+            ["full stop"] = ("ピリオド", "."),
+            ["comma"] = ("カンマ", ","),
+            ["question mark"] = ("疑問符", "?"),
+            ["exclamation mark"] = ("感嘆符", "!"),
+            ["exclamation point"] = ("感嘆符", "!"),
+            ["colon"] = ("コロン", ":"),
+            ["semicolon"] = ("セミコロン", ";"),
+            ["at sign"] = ("アットマーク", "@"),
+            ["hyphen"] = ("ハイフン", "-"),
+            ["slash"] = ("スラッシュ", "/"),
+        };
+
+    /// <summary>英語で認識しているときの、取り消しのコマンド語。</summary>
+    private static readonly HashSet<string> EnglishUndoWords = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "undo", "undo that", "scratch that", "delete that",
     };
 
     /// <summary>直前の入力を取り消すコマンド語。</summary>
@@ -89,6 +125,24 @@ public sealed class TextProcessor
     {
         "取り消し", "とりけし", "取消", "取り消して", "元に戻す", "もとにもどす",
     };
+
+    /// <summary>
+    /// 表記ゆれを吸収した照合用の表。「テン」「ﾃﾝ」も「てん」と同じコマンドとして扱う。
+    /// 認識エンジンはコマンド語をひらがな・カタカナのどちらで返すか一定しないため。
+    /// </summary>
+    private static readonly Dictionary<string, (string Name, string Output)> CommandLookup = BuildLookup(Commands);
+    private static readonly Dictionary<string, (string Name, string Output)> EnglishCommandLookup = BuildLookup(EnglishCommands);
+    private static readonly HashSet<string> UndoLookup = UndoWords.Select(KanaNormalizer.NormalizeKey).ToHashSet();
+    private static readonly HashSet<string> EnglishUndoLookup = EnglishUndoWords.Select(KanaNormalizer.NormalizeKey).ToHashSet();
+
+    private static Dictionary<string, (string Name, string Output)> BuildLookup(
+        Dictionary<string, (string Name, string Output)> source)
+    {
+        var lookup = new Dictionary<string, (string Name, string Output)>(StringComparer.Ordinal);
+        foreach (var (word, command) in source)
+            lookup.TryAdd(KanaNormalizer.NormalizeKey(word), command);
+        return lookup;
+    }
 
     /// <summary>日本語(非ASCII)文字に挟まれた半角スペースを除去する。</summary>
     private static readonly Regex JapaneseGapSpace =
@@ -105,6 +159,7 @@ public sealed class TextProcessor
     public ProcessedText Process(string raw)
     {
         var s = _settings.Current;
+        bool english = RecognitionLanguages.UsesWordSpacing(s.RecognitionLanguage);
         var text = raw.Trim();
         if (text.Length == 0) return new ProcessedText("", ProcessedKind.Text);
 
@@ -112,10 +167,14 @@ public sealed class TextProcessor
         // 認識結果の末尾に句読点が付くことがあるため、判定用に取り除く。
         var key = text.TrimEnd('。', '、', '.', ',', '！', '!', '？', '?');
 
-        if (s.UndoEnabled && UndoWords.Contains(key))
+        var lookupKey = KanaNormalizer.NormalizeKey(key);
+
+        var undoWords = english ? EnglishUndoLookup : UndoLookup;
+        if (s.UndoEnabled && undoWords.Contains(lookupKey))
             return new ProcessedText("", ProcessedKind.Undo, "取り消し");
 
-        if (s.VoiceCommandsEnabled && Commands.TryGetValue(key, out var cmd))
+        var commands = english ? EnglishCommandLookup : CommandLookup;
+        if (s.VoiceCommandsEnabled && commands.TryGetValue(lookupKey, out var cmd))
             return new ProcessedText(cmd.Output, ProcessedKind.Command, cmd.Name);
 
         if (s.SnippetsEnabled)
@@ -129,15 +188,21 @@ public sealed class TextProcessor
         text = _dictionary.ApplyReplacements(text);
 
         // 日本語の間に入る不要な半角スペースを除去（Web Speech API が挿入することがある）
-        if (s.RemoveSpaces)
+        if (s.RemoveSpaces && !english)
             text = JapaneseGapSpace.Replace(text, "");
 
         // 文末句点の自動挿入（すでに句読点・記号で終わっている場合は付けない）
         if (s.AutoPeriod && text.Length > 0)
         {
             char last = text[^1];
-            if (!"。、．，!！?？…・「」）)]』】\n".Contains(last))
+            if (english)
+            {
+                if (!".,!?;:…)]\"'\n".Contains(last)) text += ".";
+            }
+            else if (!"。、．，!！?？…・「」）)]』】\n".Contains(last))
+            {
                 text += "。";
+            }
         }
 
         return new ProcessedText(text, ProcessedKind.Text);

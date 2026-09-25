@@ -2,7 +2,7 @@
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         Title="VoiceDock 辞書管理"
-        Width="560" Height="560" MinWidth="420" MinHeight="360"
+        Width="620" Height="680" MinWidth="480" MinHeight="520"
         Style="{StaticResource WindowStyle}"
         WindowStartupLocation="CenterScreen"
         Closing="Window_Closing">
@@ -10,41 +10,105 @@
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
             <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="Auto"/>
         </Grid.RowDefinitions>
 
         <TextBlock Grid.Row="0" Text="辞書管理" FontSize="18" FontWeight="Bold"/>
-        <TextBlock Grid.Row="1" Style="{StaticResource SubText}" Margin="0,4,0,10"
-                   Text="左に「読み」または実際に出てしまう語、右に出したい表記を登録します（例:「やまだ」→「山田」）。ひらがな・カタカナ・半角カナは区別しないので、読みで登録しておけば「ヤマダ」と認識された場合にも当たります。認識したあとの文字列を置き換える仕組みのため、認識そのものの精度は変わりません。短い読みは別の語の一部にも当たることがあるためご注意ください。Excel から 2 列のセル範囲をコピーして、この表に Ctrl+V で貼り付けできます。"/>
+        <TextBlock Grid.Row="1" Style="{StaticResource SubText}" Margin="0,4,0,12"
+                   Text="認識された文字を、登録した表記に置き換えます。「やまだ」のように読みで登録すると、「ヤマダ」と認識された場合にも当たります（ひらがな・カタカナ・半角カナは区別しません）。別の漢字に変換されてしまう語は、実際に出てくる語をそのまま登録してください。"/>
 
-        <!-- 大量登録を想定した 2 列テーブル形式 -->
-        <Grid Grid.Row="2">
-            <DataGrid x:Name="Grid"
-                  AutoGenerateColumns="False" CanUserAddRows="True"
-                  CanUserSortColumns="False" CanUserReorderColumns="False"
-                  SelectionUnit="CellOrRowHeader"
-                  Background="{StaticResource PanelBrush}">
-                <DataGrid.Columns>
-                    <DataGridTextColumn Header="読み・誤認識語" Binding="{Binding Wrong, UpdateSourceTrigger=PropertyChanged}" Width="*"/>
-                    <DataGridTextColumn Header="出したい表記" Binding="{Binding Correct, UpdateSourceTrigger=PropertyChanged}" Width="*"/>
-            </DataGrid.Columns>
-            </DataGrid>
-            <!-- 0 件のときに真っ白にならないよう、何をすべきかを示す -->
-            <TextBlock x:Name="EmptyText" Style="{StaticResource SubText}"
-                       HorizontalAlignment="Center" VerticalAlignment="Center"
-                       TextAlignment="Center" IsHitTestVisible="False" Visibility="Collapsed"
-                       Text="まだ登録がありません。下の行に「誤認識語」と「正しい語」を入力するか、Excel から 2 列を貼り付けてください。"/>
+        <!-- 登録フォーム -->
+        <Border Grid.Row="2" Style="{StaticResource FormPanel}" Margin="0,0,0,12">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="*"/>
+                </Grid.ColumnDefinitions>
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="Auto"/>
+                </Grid.RowDefinitions>
+
+                <TextBlock Grid.Row="0" Grid.Column="0" Text="読み・誤認識語" Style="{StaticResource FieldLabel}"/>
+                <TextBox Grid.Row="1" Grid.Column="0" x:Name="WrongBox"
+                         ToolTip="例: やまだ / せいきゅうナンバー"/>
+                <TextBlock Grid.Row="1" Grid.Column="1" Text="→" Margin="10,0"
+                           VerticalAlignment="Center" Foreground="{StaticResource SubFgBrush}"/>
+                <TextBlock Grid.Row="0" Grid.Column="2" Text="出したい表記" Style="{StaticResource FieldLabel}"/>
+                <TextBox Grid.Row="1" Grid.Column="2" x:Name="CorrectBox"
+                         ToolTip="例: 山田 / 請求No."/>
+
+                <DockPanel Grid.Row="2" Grid.ColumnSpan="3" Margin="0,10,0,0" LastChildFill="True">
+                    <Button x:Name="PrimaryButton" Content="追加" Style="{StaticResource PrimaryButton}"
+                            Click="Primary_Click" ToolTip="Enter キーでも実行できます"/>
+                    <Button x:Name="NewButton" Content="新規入力" Margin="8,0,0,0" Click="New_Click"
+                            ToolTip="入力欄を空にして、新しく登録する状態に戻します"/>
+                    <TextBlock x:Name="FormStatus" Style="{StaticResource SubText}" Margin="12,0,0,0"
+                               VerticalAlignment="Center"/>
+                </DockPanel>
+            </Grid>
+        </Border>
+
+        <!-- 検索 -->
+        <Grid Grid.Row="3" Margin="0,0,0,6">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto"/>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="Auto"/>
+            </Grid.ColumnDefinitions>
+            <TextBlock Grid.Column="0" Text="検索" VerticalAlignment="Center" Margin="0,0,8,0"
+                       Foreground="{StaticResource SubFgBrush}"/>
+            <TextBox Grid.Column="1" x:Name="SearchBox" TextChanged="SearchBox_TextChanged"
+                     ToolTip="読み・表記のどちらでも探せます（Ctrl+F）"/>
+            <TextBlock Grid.Column="2" x:Name="CountText" Style="{StaticResource SubText}"
+                       VerticalAlignment="Center" Margin="10,0,0,0"/>
         </Grid>
 
-        <StackPanel Grid.Row="3" Orientation="Horizontal" Margin="0,12,0,0">
-            <Button Content="行を削除" Click="DeleteRows_Click"/>
-            <Button Content="CSV エクスポート" Margin="8,0,0,0" Click="Export_Click"/>
-            <Button Content="CSV インポート" Margin="8,0,0,0" Click="Import_Click"/>
-        </StackPanel>
+        <!-- 一覧（編集は上のフォームで行う） -->
+        <Grid Grid.Row="4">
+            <DataGrid x:Name="Grid"
+                      AutoGenerateColumns="False" CanUserAddRows="False" CanUserDeleteRows="False"
+                      IsReadOnly="True" CanUserSortColumns="True" CanUserReorderColumns="False"
+                      SelectionUnit="FullRow" SelectionMode="Extended"
+                      SelectionChanged="Grid_SelectionChanged"
+                      Background="{StaticResource PanelBrush}">
+                <DataGrid.Columns>
+                    <DataGridTextColumn Header="読み・誤認識語" Binding="{Binding Wrong}" Width="*"/>
+                    <DataGridTextColumn Header="出したい表記" Binding="{Binding Correct}" Width="*"/>
+                </DataGrid.Columns>
+            </DataGrid>
+            <TextBlock x:Name="EmptyText" Style="{StaticResource SubText}"
+                       HorizontalAlignment="Center" VerticalAlignment="Center" Margin="24,0"
+                       TextAlignment="Center" IsHitTestVisible="False" Visibility="Collapsed"/>
+        </Grid>
 
-        <TextBlock Grid.Row="4" Style="{StaticResource SubText}" Margin="0,12,0,0"
-                   Text="【運用上の注意】エクスポートした CSV には社内用語・人名が含まれます。社外への持ち出しや共有 NAS 等での取り扱い・保存先には十分注意してください。"/>
+        <WrapPanel Grid.Row="5" Margin="0,10,0,0">
+            <Button Content="選択した項目を削除" Margin="0,0,8,4" Click="DeleteRows_Click"
+                    ToolTip="Delete キーでも削除できます"/>
+            <Button Content="CSV に書き出す" Margin="0,0,8,4" Click="Export_Click"/>
+            <Button Content="CSV から読み込む" Margin="0,0,8,4" Click="Import_Click"/>
+        </WrapPanel>
+        <TextBlock Grid.Row="6" Style="{StaticResource SubText}" Margin="0,2,0,0"
+                   Text="Excel の 2 列（読み・表記）をコピーし、一覧を選んで Ctrl+V で一括登録することもできます。同じ読みがあれば表記を上書きします。"/>
+
+        <!-- 試し入力 -->
+        <Border Grid.Row="7" Style="{StaticResource FormPanel}" Margin="0,12,0,0">
+            <StackPanel>
+                <TextBlock Text="試す — 認識された文章を想定して入力すると、置き換え後の結果を表示します"
+                           Style="{StaticResource FieldLabel}"/>
+                <TextBox x:Name="TryBox" TextChanged="TryBox_TextChanged"
+                         ToolTip="例: ヤマダさんに連絡"/>
+                <TextBlock x:Name="TryResult" Margin="0,6,0,0" TextWrapping="Wrap"/>
+                <TextBlock Style="{StaticResource SubText}" Margin="0,8,0,0"
+                           Text="CSV に書き出したファイルには社内用語・人名が含まれます。社外への持ち出しや保存先には十分注意してください。"/>
+            </StackPanel>
+        </Border>
     </Grid>
 </Window>

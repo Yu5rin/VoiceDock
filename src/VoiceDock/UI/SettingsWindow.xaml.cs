@@ -20,12 +20,15 @@ public partial class SettingsWindow : Window
     private readonly Action _openAppRules;
     private readonly Action _checkUpdate;
     private readonly Action _restartBrowser;
+    private readonly BackupService _backup;
+    private readonly Func<BackupContents, bool> _restoreBackup;
     private bool _initializing = true;
 
     public SettingsWindow(SettingsService settings,
         Func<HotkeySpec, bool> applyHotkey, Func<HotkeySpec, bool> applyUndoHotkey,
         Action openDictionary, Action openSnippets, Action openAppRules, Action checkUpdate,
-        Action restartBrowser, Func<string?> getMicrophone)
+        Action restartBrowser, Func<string?> getMicrophone,
+        BackupService backup, Func<BackupContents, bool> restoreBackup)
     {
         InitializeComponent();
         AppTheme.ApplyToWindow(this);
@@ -37,6 +40,8 @@ public partial class SettingsWindow : Window
         _openAppRules = openAppRules;
         _checkUpdate = checkUpdate;
         _restartBrowser = restartBrowser;
+        _backup = backup;
+        _restoreBackup = restoreBackup;
 
         // マイクは選べない（Web Speech API に指定手段が無い）ため、
         // 今どれが使われているかだけを見えるようにする
@@ -62,6 +67,11 @@ public partial class SettingsWindow : Window
             NewlineMode.AltEnter => 2,
             _ => 0,
         };
+
+        foreach (var (_, label) in RecognitionLanguages.All)
+            LanguageCombo.Items.Add(label);
+        LanguageCombo.SelectedIndex = Math.Max(0,
+            RecognitionLanguages.All.ToList().FindIndex(l => l.Code == settings.Current.RecognitionLanguage));
 
         BrowserCombo.Items.Add("既定のブラウザに合わせる");
         BrowserCombo.Items.Add("常に Microsoft Edge");
@@ -103,7 +113,20 @@ public partial class SettingsWindow : Window
         VersionText.Text = $"VoiceDock v{version?.ToString(3) ?? "?"} — Web Speech API 音声入力ツール";
 
         _initializing = false;
+
+        // トレイメニューから認識言語を切り替えた場合も、開いている画面の表示を合わせる
+        _settings.Changed += OnSettingsChanged;
+        Closed += (_, _) => _settings.Changed -= OnSettingsChanged;
     }
+
+    private void OnSettingsChanged(AppSettings s) => Dispatcher.BeginInvoke(() =>
+    {
+        int index = RecognitionLanguages.All.ToList().FindIndex(l => l.Code == s.RecognitionLanguage);
+        if (index < 0 || LanguageCombo.SelectedIndex == index) return;
+        _initializing = true;
+        LanguageCombo.SelectedIndex = index;
+        _initializing = false;
+    });
 
     private void BrowserCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
@@ -117,6 +140,13 @@ public partial class SettingsWindow : Window
         _settings.Update(s => s.Browser = choice);
         // アプリを再起動させずにその場で切り替える
         _restartBrowser();
+    }
+
+    private void LanguageCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_initializing || LanguageCombo.SelectedIndex < 0) return;
+        var code = RecognitionLanguages.All[LanguageCombo.SelectedIndex].Code;
+        _settings.Update(s => s.RecognitionLanguage = code);
     }
 
     private void InputMethodCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
@@ -204,6 +234,70 @@ public partial class SettingsWindow : Window
     }
 
     private void CheckUpdate_Click(object sender, RoutedEventArgs e) => _checkUpdate();
+
+    private void SaveBackup_Click(object sender, RoutedEventArgs e)
+    {
+        var dialog = new Microsoft.Win32.SaveFileDialog
+        {
+            Title = "バックアップを保存",
+            Filter = "VoiceDock バックアップ (*.json)|*.json",
+            FileName = $"voicedock-backup-{DateTime.Now:yyyyMMdd}.json",
+        };
+        if (dialog.ShowDialog(this) != true) return;
+
+        try
+        {
+            _backup.Save(dialog.FileName);
+            ToastWindow.Show("バックアップを保存しました。辞書や定型文の内容が含まれるため、取り扱いに注意してください。", ToastKind.Warning);
+        }
+        catch (Exception ex)
+        {
+            ToastWindow.Show($"バックアップを保存できませんでした。{UserMessage.Describe(ex)}", ToastKind.Error);
+        }
+    }
+
+    private void RestoreBackup_Click(object sender, RoutedEventArgs e)
+    {
+        var dialog = new Microsoft.Win32.OpenFileDialog
+        {
+            Title = "バックアップから復元",
+            Filter = "VoiceDock バックアップ (*.json)|*.json|すべてのファイル (*.*)|*.*",
+        };
+        if (dialog.ShowDialog(this) != true) return;
+
+        BackupContents contents;
+        try
+        {
+            contents = BackupService.Load(dialog.FileName);
+        }
+        catch (System.IO.InvalidDataException ex)
+        {
+            ToastWindow.Show(ex.Message, ToastKind.Error);
+            return;
+        }
+        catch (Exception ex)
+        {
+            ToastWindow.Show($"バックアップを読み込めませんでした。{UserMessage.Describe(ex)}", ToastKind.Error);
+            return;
+        }
+
+        // すべてを置き換えるため取り消しがきかない。何が入っているかを見せてから確認する
+        var created = contents.CreatedAt is { } t ? t.ToString("yyyy/MM/dd HH:mm") : "不明";
+        var answer = MessageBox.Show(this,
+            "このバックアップで、今の設定・辞書・定型文をすべて置き換えます。\n\n" +
+            $"作成日時: {created}\n" +
+            $"作成したバージョン: {contents.AppVersion ?? "不明"}\n" +
+            $"辞書: {contents.Dictionary.Count} 件　定型文: {contents.Snippets.Count} 件\n\n" +
+            "この操作は取り消せません。続けますか？",
+            "バックアップから復元", MessageBoxButton.OKCancel, MessageBoxImage.Warning, MessageBoxResult.Cancel);
+        if (answer != MessageBoxResult.OK) return;
+
+        if (!_restoreBackup(contents)) return;
+
+        ToastWindow.Show($"バックアップから復元しました（辞書 {contents.Dictionary.Count} 件・定型文 {contents.Snippets.Count} 件）。");
+        // この画面は復元前の設定を表示しているため、閉じて開き直してもらう
+        Close();
+    }
 
     private void Reset_Click(object sender, RoutedEventArgs e)
     {

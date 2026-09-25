@@ -103,8 +103,14 @@ public sealed class SpeechBridgeServer : IDisposable
     /// 端末内での認識（Web Speech API の processLocally）を要求するかどうか。
     /// 非対応環境や言語パック未導入の場合はブラウザ側でクラウド認識にフォールバックする。
     /// </param>
-    public Task StartRecognitionAsync(bool processLocally = false) =>
-        SendCommandAsync("start", $",\"processLocally\":{(processLocally ? "true" : "false")}");
+    /// <param name="lang">認識言語（例: ja-JP / en-US）。認識中に変えた場合は、その場で切り替わる。</param>
+    public Task StartRecognitionAsync(bool processLocally = false, string lang = "ja-JP")
+    {
+        // 言語コードは JSON にそのまま埋め込むため、英字とハイフン以外は受け付けない
+        if (lang.Any(c => !(char.IsAsciiLetter(c) || c == '-'))) lang = "ja-JP";
+        return SendCommandAsync("start",
+            $",\"processLocally\":{(processLocally ? "true" : "false")},\"lang\":\"{lang}\"");
+    }
 
     /// <summary>ブラウザに認識停止を指示する。</summary>
     public Task StopRecognitionAsync() => SendCommandAsync("stop");
@@ -340,6 +346,8 @@ public sealed class SpeechBridgeServer : IDisposable
 <script>
   const WS_URL = "ws://127.0.0.1:__PORT__/ws?token=__TOKEN__";
   let ws, recog, shouldListen = false;
+  // 認識が実際に動いているか（onstart〜onend の間）
+  let recogRunning = false;
   let audioCtx, analyser, micStream, levelTimer;
 
   function send(o){ try{ if(ws && ws.readyState===1) ws.send(JSON.stringify(o)); }catch(_){} }
@@ -349,7 +357,7 @@ public sealed class SpeechBridgeServer : IDisposable
     ws.onopen = () => send({type:'status', state:'ready'});
     ws.onmessage = (e) => {
       let m; try{ m = JSON.parse(e.data); }catch(_){ return; }
-      if(m.cmd === 'start') startRecog(!!m.processLocally);
+      if(m.cmd === 'start') startRecog(!!m.processLocally, m.lang);
       else if(m.cmd === 'stop') stopRecog();
     };
     ws.onclose = () => setTimeout(connect, 1000);
@@ -360,15 +368,20 @@ public sealed class SpeechBridgeServer : IDisposable
 
   // 端末内での認識(processLocally)が使えるかを判定し、可能なら有効化する。
   // 言語パック未導入なら裏で取得を開始し、今回はクラウド認識で動かす。
-  async function applyLocalMode(r, want){
-    if(!want){ send({type:'mode', value:'cloud'}); return; }
+  async function applyLocalMode(r, want, lang){
+    if(!want){
+      // 以前オンにした設定が残らないよう、明示的に戻す
+      if('processLocally' in r) r.processLocally = false;
+      send({type:'mode', value:'cloud'});
+      return;
+    }
     const SR = getSR();
     if(!('processLocally' in r)){ send({type:'mode', value:'unsupported'}); return; }
     try{
-      const opts = {langs:['ja-JP'], processLocally:true};
+      const opts = {langs:[lang], processLocally:true};
       let st = null;
       if(typeof SR.available === 'function') st = await SR.available(opts);
-      else if(typeof SR.availableOnDevice === 'function') st = await SR.availableOnDevice('ja-JP');
+      else if(typeof SR.availableOnDevice === 'function') st = await SR.availableOnDevice(lang);
 
       if(st === 'available'){
         r.processLocally = true;
@@ -378,8 +391,8 @@ public sealed class SpeechBridgeServer : IDisposable
       if(st === 'downloadable' || st === 'downloading'){
         // 言語パックの導入を裏で開始（完了後の起動からローカル処理になる）
         try{
-          if(typeof SR.install === 'function') SR.install({langs:['ja-JP']}).catch(()=>{});
-          else if(typeof SR.installOnDevice === 'function') SR.installOnDevice('ja-JP');
+          if(typeof SR.install === 'function') SR.install({langs:[lang]}).catch(()=>{});
+          else if(typeof SR.installOnDevice === 'function') SR.installOnDevice(lang);
         }catch(_){}
         send({type:'mode', value:'downloading'});
         return;
@@ -404,17 +417,32 @@ public sealed class SpeechBridgeServer : IDisposable
       }
     };
     r.onerror = (ev) => { if(ev.error !== 'no-speech') send({type:'error', detail:ev.error}); };
+    r.onstart = () => { recogRunning = true; };
     // 連続認識は無音などで自動終了することがあるため、継続希望なら再開する
-    r.onend = () => { if(shouldListen){ try{ r.start(); }catch(_){} } };
+    r.onend = () => {
+      recogRunning = false;
+      if(shouldListen){ try{ r.start(); }catch(_){} }
+    };
     return r;
   }
 
-  async function startRecog(processLocally){
+  async function startRecog(processLocally, lang){
     shouldListen = true;
+    lang = lang || 'ja-JP';
     if(!recog) recog = setupRecog();
     if(!recog) return;
+
+    // まだ前の認識が動いている（停止直後にすぐ開始した・認識中に言語を変えた）場合は、
+    // 言語だけ差し替えて止める。onend で新しい言語のまま自動的に再開される。
+    if(recogRunning){
+      if(recog.lang !== lang){ recog.lang = lang; try{ recog.stop(); }catch(_){} }
+      startLevel();
+      return;
+    }
+
+    recog.lang = lang;
     // ローカル処理の可否判定（非対応・未導入なら自動でクラウドにフォールバック）
-    await applyLocalMode(recog, processLocally);
+    await applyLocalMode(recog, processLocally, lang);
     if(!shouldListen) return;   // 判定中に停止された場合
     try{ recog.start(); }catch(_){ /* 既に開始済みなら無視 */ }
     send({type:'status', state:'listening'});

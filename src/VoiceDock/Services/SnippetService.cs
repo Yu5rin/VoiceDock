@@ -102,11 +102,15 @@ public sealed class SnippetService
     /// </summary>
     public string? TryExpand(string phrase)
     {
+        // 「じゅうしょ」と登録していても「ジュウショ」と認識されることがあるため、
+        // 辞書と同じく、かなや英字の表記ゆれを無視して比べる
+        var key = KanaNormalizer.NormalizeKey(phrase);
+        if (key.Length == 0) return null;
         lock (_sync)
         {
             foreach (var e in _entries)
             {
-                if (string.Equals(e.Phrase, phrase, StringComparison.OrdinalIgnoreCase))
+                if (KanaNormalizer.NormalizeKey(e.Phrase) == key)
                     return e.Expansion;
             }
         }
@@ -130,5 +134,44 @@ public sealed class SnippetService
             _log.Error($"定型文ファイルの保存に失敗しました: {ex.Message}");
             SaveFailed?.Invoke(UserMessage.Describe(ex));
         }
+    }
+
+    private const string CsvHeaderPhrase = "読み（発話）";
+    private const string CsvHeaderExpansion = "入力する本文";
+
+    /// <summary>CSV (UTF-8 BOM 付き、見出し行あり) にエクスポートする。本文の改行もそのまま残る。</summary>
+    public void ExportCsv(string path)
+    {
+        List<SnippetEntry> entries;
+        lock (_sync) entries = _entries.ToList();
+        Csv.Write(path, CsvHeaderPhrase, CsvHeaderExpansion, entries.Select(e => (e.Phrase, e.Expansion)));
+        _log.Info($"定型文を CSV にエクスポートしました: {path}");
+    }
+
+    /// <summary>CSV からインポートして定型文全体を置き換える。戻り値は取り込んだ件数。</summary>
+    public int ImportCsv(string path)
+    {
+        var rows = Csv.Read(path, (a, b) => a == CsvHeaderPhrase && b == CsvHeaderExpansion);
+        var entries = rows
+            .Select(r => new SnippetEntry
+            {
+                Phrase = r.A.Trim(),
+                // Excel は改行を CRLF で書くことがあるため、LF にそろえる
+                Expansion = r.B.Replace("\r\n", "\n").Replace('\r', '\n'),
+            })
+            .ToList();
+        Replace(entries);
+        _log.Info($"定型文を CSV からインポートしました: {path} ({entries.Count} 件)");
+        return entries.Count;
+    }
+
+    /// <summary>
+    /// バックアップから復元する。読み込みに失敗していた場合も、
+    /// 利用者が明示的に置き換えを選んだので保存を許可する。
+    /// </summary>
+    public void RestoreFrom(IEnumerable<SnippetEntry> entries)
+    {
+        _loadFailed = false;
+        Replace(entries);
     }
 }

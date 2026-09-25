@@ -86,6 +86,13 @@ internal static class KanaNormalizer
         return sb.ToString();
     }
 
+    /// <summary>
+    /// 表記ゆれを吸収した比較用の文字列を返す。
+    /// 「やまだ」と「ヤマダ」を同じ語として扱う重複チェックや検索に使う。
+    /// </summary>
+    public static string NormalizeKey(string? text) =>
+        string.IsNullOrEmpty(text) ? "" : Normalize(text.Trim(), out _);
+
     /// <summary>濁点・半濁点を付けた文字を返す。付けられない場合は '\0'。</summary>
     private static char Combine(string pairs, char baseChar)
     {

@@ -91,6 +91,12 @@ public class AppSettings
     /// </summary>
     public Dictionary<string, InputMethod> AppInputMethods { get; set; } = new(StringComparer.OrdinalIgnoreCase);
 
+    /// <summary>
+    /// 音声認識の言語（Web Speech API の言語コード）。既定は日本語。
+    /// 選べる値は <see cref="RecognitionLanguages"/> を参照。
+    /// </summary>
+    public string RecognitionLanguage { get; set; } = RecognitionLanguages.Japanese;
+
     /// <summary>認識に使用するブラウザ（既定は Windows の既定ブラウザに追従）</summary>
     public BrowserChoice Browser { get; set; } = BrowserChoice.Auto;
 

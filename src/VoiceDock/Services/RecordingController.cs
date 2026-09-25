@@ -15,11 +15,10 @@ public sealed record RecognitionRecord(DateTime Time, string Text, string App);
 /// 認識の開始/停止と、認識結果の入力欄への流し込みを統括する。
 /// 実際の録音・認識はブラウザ(Web Speech API)が行い、本体は
 /// 確定テキストを受け取って後処理（音声コマンド・辞書置換・整形）のうえ前面アプリへ入力する。
-/// ホットキーのトグル、30 秒無音の自動停止、トレイ・オーバーレイ制御を担う。
+/// ホットキーのトグル、無音が続いたときの自動停止、トレイ・オーバーレイ制御を担う。
 /// </summary>
 public sealed class RecordingController : IDisposable
 {
-    private static readonly TimeSpan SilenceAutoStop = TimeSpan.FromSeconds(30);
 
     /// <summary>
     /// 停止したあと、認識エンジンから最後の確定テキストが届くまでの猶予。
@@ -27,6 +26,14 @@ public sealed class RecordingController : IDisposable
     /// ここで打ち切ると最後のひと言が丸ごと消えてしまう。
     /// </summary>
     private static readonly TimeSpan FinalGraceAfterStop = TimeSpan.FromSeconds(3);
+
+    /// <summary>
+    /// 音声入力を止めてから（または最後に入力してから）IME を元に戻すまでの間。
+    /// 送った文字を相手のアプリが読み終える前に IME を戻すと、残りの文字が IME を通って
+    /// 欠けたり入れ替わったりするため、十分に待つ。停止直後に遅れて届く確定テキストも
+    /// たいていこの間に入力し終わる。
+    /// </summary>
+    private static readonly TimeSpan ImeRestoreDelay = TimeSpan.FromSeconds(1.5);
 
     /// <summary>同じ認識エラーを繰り返し通知しない間隔。</summary>
     private static readonly TimeSpan ErrorNoticeInterval = TimeSpan.FromMinutes(1);
@@ -42,6 +49,9 @@ public sealed class RecordingController : IDisposable
     private readonly object _sync = new();
     private bool _listening;
     private DispatcherTimer? _silenceTimer;
+
+    /// <summary>音声入力が落ち着いたら IME を元に戻すためのタイマー。</summary>
+    private readonly DispatcherTimer _imeRestoreTimer;
     private bool _localModeNotified;
     private bool _localFallbackNotified;
 
@@ -132,6 +142,15 @@ public sealed class RecordingController : IDisposable
         _overlay = overlay;
         _dispatcher = Application.Current.Dispatcher;
 
+        _imeRestoreTimer = new DispatcherTimer(DispatcherPriority.Normal, _dispatcher) { Interval = ImeRestoreDelay };
+        _imeRestoreTimer.Tick += (_, _) =>
+        {
+            _imeRestoreTimer.Stop();
+            // 音声入力を再開していたら、止めるまで IME はオフのままにする
+            lock (_sync) if (_listening) return;
+            TextInjector.RestoreSuppressedIme();
+        };
+
         _bridge.FinalText += OnFinalText;
         _bridge.PartialText += _overlay.SetPartialText;
         _bridge.LevelChanged += _overlay.UpdateLevel;
@@ -217,6 +236,7 @@ public sealed class RecordingController : IDisposable
 
         _listening = true;
         _stoppedAtUtc = DateTime.MinValue;
+        _imeRestoreTimer.Stop();
         _activeLanguage = _settings.Current.RecognitionLanguage;
         _ = _bridge.StartRecognitionAsync(_settings.Current.PreferLocalRecognition, _activeLanguage);
         _tray.SetState(TrayState.Recording);
@@ -232,6 +252,7 @@ public sealed class RecordingController : IDisposable
         if (!_listening) return;
         _listening = false;
         _stoppedAtUtc = DateTime.UtcNow;
+        ScheduleImeRestore();
         _ = _bridge.StopRecognitionAsync();
         StopSilenceTimer();
         _overlay.HideOverlay();
@@ -271,6 +292,26 @@ public sealed class RecordingController : IDisposable
             if (processed.Kind == ProcessedKind.Undo)
             {
                 UndoLastInjection("音声コマンド");
+                return;
+            }
+
+            // キー操作の音声コマンド（送信・全選択など）は、文字ではなくキーを送る
+            if (processed.Kind == ProcessedKind.Keys && processed.Keys is { } keys)
+            {
+                if (TextInjector.SendKeyStroke(keys))
+                {
+                    _log.Info($"音声コマンド「{processed.CommandName}」を実行しました");
+                    // キー操作は文字数ぶんの BackSpace では取り消せないため、取り消しの対象から外す。
+                    // 送信した後の入力は新しい文になるので、英語の単語間スペースも補わない
+                    _lastInjectedLength = 0;
+                    _lastInjectedApp = "";
+                    _spaceBeforeNext = false;
+                    ScheduleImeRestore();
+                }
+                else
+                {
+                    _log.Info($"入力欄が見つからないため音声コマンド「{processed.CommandName}」を実行しませんでした");
+                }
                 return;
             }
 
@@ -378,6 +419,10 @@ public sealed class RecordingController : IDisposable
             _lastInjectedApp = "";
             return "";
         }
+
+        // 止めた後に届いた確定テキストや、履歴からの再入力でも IME をオフにしているため、
+        // 入力し終えてから間を置いて戻す
+        ScheduleImeRestore();
 
         _lastInjectedLength = CountTextElements(text);
         _lastInjectedApp = app;
@@ -550,13 +595,18 @@ public sealed class RecordingController : IDisposable
         _dispatcher.BeginInvoke(() =>
         {
             StopSilenceTimer();
-            _silenceTimer = new DispatcherTimer { Interval = SilenceAutoStop };
+
+            // 0 秒は「自動停止しない」
+            int seconds = _settings.Current.SilenceAutoStopSeconds;
+            if (seconds <= 0) return;
+
+            _silenceTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(seconds) };
             _silenceTimer.Tick += (_, _) =>
             {
                 lock (_sync)
                 {
                     if (!_listening) return;
-                    _log.Info("30 秒間無音が続いたため音声入力を自動停止します");
+                    _log.Info($"{seconds} 秒間無音が続いたため音声入力を自動停止します");
                     StopListening("無音自動停止");
                 }
             };
@@ -570,8 +620,19 @@ public sealed class RecordingController : IDisposable
         _silenceTimer = null;
     }
 
+    /// <summary>音声入力中でなければ、少し待ってから IME を元に戻すよう予約する（予約済みなら延ばす）。</summary>
+    private void ScheduleImeRestore()
+    {
+        lock (_sync) if (_listening) return;
+        _imeRestoreTimer.Stop();
+        _imeRestoreTimer.Start();
+    }
+
     public void Dispose()
     {
         StopSilenceTimer();
+        // 終了時にオフのまま残さない
+        _imeRestoreTimer.Stop();
+        TextInjector.RestoreSuppressedIme();
     }
 }

@@ -58,6 +58,21 @@ public partial class SettingsWindow : Window
         HotkeyModeCombo.Items.Add("押している間だけ音声入力（押しっぱなし）");
         HotkeyModeCombo.SelectedIndex = settings.Current.HotkeyMode == HotkeyMode.PushToTalk ? 1 : 0;
 
+        foreach (var sec in AppSettings.SilenceAutoStopChoices)
+            SilenceCombo.Items.Add(sec == 0 ? "自動停止しない" : $"{sec} 秒");
+        SilenceCombo.SelectedIndex = Math.Max(0,
+            Array.IndexOf(AppSettings.SilenceAutoStopChoices, settings.Current.SilenceAutoStopSeconds));
+
+        WidthCombo.Items.Add("認識結果のまま");
+        WidthCombo.Items.Add("半角にそろえる（例: ３時 → 3時）");
+        WidthCombo.Items.Add("全角にそろえる（例: 3時 → ３時）");
+        WidthCombo.SelectedIndex = settings.Current.CharacterWidth switch
+        {
+            CharacterWidth.Half => 1,
+            CharacterWidth.Full => 2,
+            _ => 0,
+        };
+
         NewlineCombo.Items.Add("Shift+Enter（推奨・大半のアプリで改行）");
         NewlineCombo.Items.Add("Enter（Shift+Enter が効かないアプリ向け）");
         NewlineCombo.Items.Add("Alt+Enter（Excel のセル内改行）");
@@ -90,6 +105,8 @@ public partial class SettingsWindow : Window
         RemoveSpacesCheck.IsChecked = settings.Current.RemoveSpaces;
         AutoPeriodCheck.IsChecked = settings.Current.AutoPeriod;
         VoiceCommandsCheck.IsChecked = settings.Current.VoiceCommandsEnabled;
+        KeyCommandsCheck.IsChecked = settings.Current.KeyCommandsEnabled;
+        RemoveFillersCheck.IsChecked = settings.Current.RemoveFillers;
         SnippetsCheck.IsChecked = settings.Current.SnippetsEnabled;
         UndoCheck.IsChecked = settings.Current.UndoEnabled;
         SoundCheck.IsChecked = settings.Current.SoundFeedback;
@@ -164,12 +181,33 @@ public partial class SettingsWindow : Window
             s.RemoveSpaces = RemoveSpacesCheck.IsChecked == true;
             s.AutoPeriod = AutoPeriodCheck.IsChecked == true;
             s.VoiceCommandsEnabled = VoiceCommandsCheck.IsChecked == true;
+            s.KeyCommandsEnabled = KeyCommandsCheck.IsChecked == true;
+            s.RemoveFillers = RemoveFillersCheck.IsChecked == true;
             s.SnippetsEnabled = SnippetsCheck.IsChecked == true;
             s.UndoEnabled = UndoCheck.IsChecked == true;
             s.SoundFeedback = SoundCheck.IsChecked == true;
             s.PreferLocalRecognition = LocalRecognitionCheck.IsChecked == true;
             s.LogRecognitionText = LogRecognitionCheck.IsChecked == true;
         });
+    }
+
+    private void SilenceCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_initializing || SilenceCombo.SelectedIndex < 0) return;
+        var seconds = AppSettings.SilenceAutoStopChoices[SilenceCombo.SelectedIndex];
+        _settings.Update(s => s.SilenceAutoStopSeconds = seconds);
+    }
+
+    private void WidthCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_initializing) return;
+        var width = WidthCombo.SelectedIndex switch
+        {
+            1 => CharacterWidth.Half,
+            2 => CharacterWidth.Full,
+            _ => CharacterWidth.AsIs,
+        };
+        _settings.Update(s => s.CharacterWidth = width);
     }
 
     private void NewlineCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)

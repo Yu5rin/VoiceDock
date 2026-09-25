@@ -39,6 +39,11 @@
                                    Style="{StaticResource SubText}" Margin="0,2,0,6"/>
                         <ComboBox x:Name="HotkeyModeCombo" SelectionChanged="HotkeyModeCombo_SelectionChanged"/>
 
+                        <TextBlock Text="無音で自動停止するまでの時間" Margin="0,12,0,0"/>
+                        <TextBlock Text="話さない状態がこの時間続くと、音声入力を自動で止めます。止め忘れて周りの会話を拾わないための機能です"
+                                   Style="{StaticResource SubText}" Margin="0,2,0,6"/>
+                        <ComboBox x:Name="SilenceCombo" SelectionChanged="SilenceCombo_SelectionChanged"/>
+
                         <Separator Margin="0,16" Background="{StaticResource BorderBrush}"/>
 
                         <TextBlock Text="直前の入力を取り消す" FontWeight="Bold"/>
@@ -99,6 +104,15 @@
                                   Checked="Option_Changed" Unchecked="Option_Changed"/>
                         <TextBlock Text="※ 息継ぎのたびに区切られるため、文の途中に「。」が入ることがあります。句読点は音声コマンド（「まる」「てん」）での入力を推奨します"
                                    Style="{StaticResource SubText}" Margin="0,4,0,0"/>
+                        <CheckBox x:Name="RemoveFillersCheck" Content="「えーと」「あのー」などのつなぎ言葉を取り除く" Margin="0,10,0,0"
+                                  Checked="Option_Changed" Unchecked="Option_Changed"/>
+                        <TextBlock Text="文頭や読点の後にある「えーと」「えっと」「あのー」「そのー」「うーん」などを取り除きます。「あの人」「その件」のような普通の言葉は消しません"
+                                   Style="{StaticResource SubText}" Margin="0,4,0,0"/>
+
+                        <TextBlock Text="英数字の幅" Margin="0,12,0,0"/>
+                        <TextBlock Text="認識結果の数字とアルファベットを、半角か全角にそろえます（日本語で認識しているときのみ。記号と、辞書で登録した表記は変えません）"
+                                   Style="{StaticResource SubText}" Margin="0,2,0,6"/>
+                        <ComboBox x:Name="WidthCombo" SelectionChanged="WidthCombo_SelectionChanged"/>
 
                     </StackPanel>
                 </ScrollViewer>
@@ -113,6 +127,12 @@
                         <TextBlock Text="その語だけを発話すると、対応する文字や操作を入力します。文中に含まれるだけでは反応しません。&#10;・操作: 改行 / スペース / タブ&#10;・句読点: まる（。） てん（、） びっくり（！） はてな（？）&#10;・記号: アットマーク（@） コロン スラッシュ ハイフン アンダーバー ドット かっこ 矢印 など"
                                    Style="{StaticResource SubText}" Margin="0,2,0,6"/>
                         <CheckBox x:Name="VoiceCommandsCheck" Content="音声コマンド（句読点・記号を含む）を有効にする"
+                                  Checked="Option_Changed" Unchecked="Option_Changed"/>
+
+                        <TextBlock Text="キー操作の音声コマンド" Margin="0,12,0,0"/>
+                        <TextBlock Text="その語だけを発話すると、キー操作を送ります。「改行」は Shift+Enter のため、チャットで送信したいときは「送信」と話してください。&#10;・送信 / エンター（Enter）　・全選択（Ctrl+A）　・コピー（Ctrl+C）&#10;・切り取り（Ctrl+X）　・貼り付け（Ctrl+V）　・一文字消す / バックスペース（BackSpace）&#10;英語で認識しているときは press enter / send / select all / copy / cut / paste / backspace"
+                                   Style="{StaticResource SubText}" Margin="0,2,0,6"/>
+                        <CheckBox x:Name="KeyCommandsCheck" Content="キー操作の音声コマンドを有効にする"
                                   Checked="Option_Changed" Unchecked="Option_Changed"/>
 
                         <Separator Margin="0,16" Background="{StaticResource BorderBrush}"/>

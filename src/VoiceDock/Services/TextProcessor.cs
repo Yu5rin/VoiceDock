@@ -201,6 +201,45 @@ public sealed class TextProcessor
     };
 
     /// <summary>
+    /// 認識エンジンが付けた文末の句点と、疑問のイントネーションの「？」を整える。
+    /// ・「。」の自動挿入がオフなら、認識エンジン（Edge など）が区切りごとに付けてくる文末の「。」を取り除く。
+    ///   オンの場合は最後にまとめて付けるので、ここでは触らない
+    /// ・語尾が上がっていれば、文末に「？」を付ける（すでに「？」「！」で終わっていればそのまま）
+    /// </summary>
+    internal static string AdjustEnding(string text, bool english, bool autoPeriod, bool question)
+    {
+        if (text.Length == 0) return text;
+
+        if (question)
+        {
+            // 「、？」とならないよう、文末の読点も外してから付ける
+            var body = TrimRecognizerPeriod(text, english).TrimEnd('、', ',', '，');
+            if (body.Length == 0) return text;
+            char last = body[^1];
+            if ("?？!！".Contains(last)) return body;
+            return body + (english ? "?" : "？");
+        }
+
+        return autoPeriod ? text : TrimRecognizerPeriod(text, english);
+    }
+
+    /// <summary>
+    /// 文末の句点を 1 つ取り除く。英語は「U.S.」「e.g.」のような略語や「...」を壊さないよう、
+    /// 最後の語にほかのピリオドが無い場合だけ取り除く。
+    /// </summary>
+    private static string TrimRecognizerPeriod(string text, bool english)
+    {
+        if (english)
+        {
+            if (!text.EndsWith('.') || text.EndsWith("..")) return text;
+            int space = text.LastIndexOf(' ');
+            var lastWord = text[(space + 1)..^1];
+            return lastWord.Contains('.') ? text : text[..^1];
+        }
+        return text.EndsWith('。') || text.EndsWith('．') ? text[..^1] : text;
+    }
+
+    /// <summary>
     /// 表記ゆれを吸収した照合用の表。「テン」「ﾃﾝ」も「てん」と同じコマンドとして扱う。
     /// 認識エンジンはコマンド語をひらがな・カタカナのどちらで返すか一定しないため。
     /// </summary>
@@ -233,7 +272,8 @@ public sealed class TextProcessor
     }
 
     /// <summary>確定した認識テキスト 1 区切り分を処理する。</summary>
-    public ProcessedText Process(string raw)
+    /// <param name="risingIntonation">語尾が上がった（疑問のイントネーション）と判定された発話か。</param>
+    public ProcessedText Process(string raw, bool risingIntonation = false)
     {
         var s = _settings.Current;
         bool english = RecognitionLanguages.UsesWordSpacing(s.RecognitionLanguage);
@@ -274,6 +314,10 @@ public sealed class TextProcessor
             if (expanded != null)
                 return new ProcessedText(expanded, ProcessedKind.Command, $"定型文「{key}」");
         }
+
+        // 文末の句読点を整える。辞書や定型文で登録した表記の「。」は残したいため、置き換えより前に行う
+        text = AdjustEnding(text, english, s.AutoPeriod, s.QuestionByIntonation && risingIntonation);
+        if (text.Length == 0) return new ProcessedText("", ProcessedKind.Text);
 
         // 英数字の幅をそろえる。辞書で登録した表記（例: 請求No.）はそのまま出したいため、
         // 辞書の置き換えより前に行う

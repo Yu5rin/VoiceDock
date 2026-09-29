@@ -105,7 +105,11 @@
                                   Checked="Option_Changed" Unchecked="Option_Changed"/>
                         <CheckBox x:Name="AutoPeriodCheck" Content="発話の区切りごとに文末へ「。」を自動挿入する" Margin="0,8,0,0"
                                   Checked="Option_Changed" Unchecked="Option_Changed"/>
-                        <TextBlock Text="※ 息継ぎのたびに区切られるため、文の途中に「。」が入ることがあります。句読点は音声コマンド（「まる」「てん」）での入力を推奨します"
+                        <TextBlock Text="※ 息継ぎのたびに区切られるため、文の途中に「。」が入ることがあります。句読点は音声コマンド（「まる」「てん」）での入力を推奨します。オフのときは、認識エンジンが区切りごとに付ける文末の「。」も取り除きます"
+                                   Style="{StaticResource SubText}" Margin="0,4,0,0"/>
+                        <CheckBox x:Name="QuestionCheck" Content="語尾が上がる話し方のときは、文末に「？」を付ける" Margin="0,10,0,0"
+                                  Checked="Option_Changed" Unchecked="Option_Changed"/>
+                        <TextBlock Text="「行く？」のように語尾を上げて話すと、声の高さから疑問文と判断して「？」を付けます。声の高さはこの PC の中で調べるだけで、どこにも送りません。話し方によっては付かないことや、疑問文でなくても付くことがあります"
                                    Style="{StaticResource SubText}" Margin="0,4,0,0"/>
                         <CheckBox x:Name="RemoveFillersCheck" Content="「えーと」「あのー」などのつなぎ言葉を取り除く" Margin="0,10,0,0"
                                   Checked="Option_Changed" Unchecked="Option_Changed"/>

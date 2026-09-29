@@ -58,7 +58,7 @@ public sealed class SpeechBridgeServer : IDisposable
     public event Action<string?, string>? MicrophoneChanged;
 
     /// <summary>確定した認識テキスト。</summary>
-    public event Action<string>? FinalText;
+    public event Action<string, bool>? FinalText;
 
     /// <summary>暫定（認識途中）の認識テキスト。</summary>
     public event Action<string>? PartialText;
@@ -232,7 +232,11 @@ public sealed class SpeechBridgeServer : IDisposable
             {
                 case "final":
                     if (root.TryGetProperty("text", out var ft))
-                        FinalText?.Invoke(ft.GetString() ?? "");
+                    {
+                        // rising: 語尾が上がった（疑問のイントネーション）とブラウザ側で判定したか
+                        bool rising = root.TryGetProperty("rising", out var rv) && rv.ValueKind == JsonValueKind.True;
+                        FinalText?.Invoke(ft.GetString() ?? "", rising);
+                    }
                     break;
                 case "partial":
                     if (root.TryGetProperty("text", out var pt))
@@ -350,6 +354,13 @@ public sealed class SpeechBridgeServer : IDisposable
   let recogRunning = false;
   let audioCtx, analyser, micStream, levelTimer;
 
+  // 語尾が上がったか（疑問のイントネーションか）を調べるため、直近の声の高さを記録する。
+  // 音声はこのページの中で調べるだけで、どこにも送らない。
+  // v: 声が出ているか / st: 声の高さ（半音単位。声が無いときは NaN）
+  let pitchFrames = [];
+  let noiseFloor = 0.01;
+  const PITCH_KEEP_MS = 6000;
+
   function send(o){ try{ if(ws && ws.readyState===1) ws.send(JSON.stringify(o)); }catch(_){} }
 
   function connect(){
@@ -412,7 +423,7 @@ public sealed class SpeechBridgeServer : IDisposable
       for(let i = ev.resultIndex; i < ev.results.length; i++){
         const res = ev.results[i];
         const text = res[0].transcript;
-        if(res.isFinal) send({type:'final', text:text});
+        if(res.isFinal) send({type:'final', text:text, rising: detectRising()});
         else send({type:'partial', text:text});
       }
     };
@@ -464,16 +475,107 @@ public sealed class SpeechBridgeServer : IDisposable
       audioCtx = new (window.AudioContext || window.webkitAudioContext)();
       const src = audioCtx.createMediaStreamSource(micStream);
       analyser = audioCtx.createAnalyser();
-      analyser.fftSize = 512;
+      // 声の高さ（70Hz まで）を測るには 2 周期分以上が要るため、約 40ms 分を取る
+      analyser.fftSize = 2048;
       src.connect(analyser);
-      const buf = new Uint8Array(analyser.frequencyBinCount);
+      const buf = new Float32Array(analyser.fftSize);
+      const rate = audioCtx.sampleRate;
+      let tick = 0;
+      pitchFrames = [];
       levelTimer = setInterval(() => {
-        analyser.getByteTimeDomainData(buf);
+        analyser.getFloatTimeDomainData(buf);
         let sum = 0;
-        for(const v of buf){ const x = (v - 128) / 128; sum += x * x; }
-        send({type:'level', value: Math.sqrt(sum / buf.length)});
-      }, 60);
+        for(const x of buf) sum += x * x;
+        const rms = Math.sqrt(sum / buf.length);
+        // 音量表示は従来どおり約 60ms ごと
+        if((tick++ & 1) === 0) send({type:'level', value: rms});
+        recordPitch(buf, rate, rms);
+      }, 30);
     }catch(_){ /* レベル取得失敗は致命的ではない */ }
+  }
+
+  // 1 フレーム分の声の高さを記録する。周囲の雑音の大きさを追いかけ、それより十分大きく、
+  // 周期のはっきりした音だけを「声」とみなす。
+  function recordPitch(buf, rate, rms){
+    if(rms < noiseFloor * 2) noiseFloor = Math.max(0.002, noiseFloor * 0.95 + rms * 0.05);
+    const loud = rms > Math.max(0.01, noiseFloor * 3);
+    const f0 = loud ? estimatePitch(buf, rate) : 0;
+    const now = performance.now();
+    pitchFrames.push({t: now, v: f0 > 0, st: f0 > 0 ? 12 * Math.log2(f0 / 100) : NaN});
+    while(pitchFrames.length && now - pitchFrames[0].t > PITCH_KEEP_MS) pitchFrames.shift();
+  }
+
+  // 自己相関で基本周波数（人の声の 70〜400Hz）を求める。周期がはっきりしなければ 0。
+  // 計算を軽くするため、約 12kHz に間引いてから調べる。
+  function estimatePitch(buf, rate){
+    const step = Math.max(1, Math.round(rate / 12000));
+    const n = Math.floor(buf.length / step);
+    const x = new Float32Array(n);
+    let mean = 0;
+    for(let i = 0; i < n; i++){
+      let s = 0;
+      for(let k = 0; k < step; k++) s += buf[i * step + k];
+      x[i] = s / step; mean += x[i];
+    }
+    mean /= n;
+    for(let i = 0; i < n; i++) x[i] -= mean;
+    const r = rate / step;
+    const minLag = Math.max(2, Math.floor(r / 400));
+    const maxLag = Math.min(n - 2, Math.ceil(r / 70));
+    if(maxLag <= minLag + 2) return 0;
+    const corr = new Float32Array(maxLag + 2);
+    let maxC = 0;
+    for(let lag = minLag - 1; lag <= maxLag + 1; lag++){
+      let s = 0, e1 = 0, e2 = 0;
+      for(let i = 0; i + lag < n; i++){ s += x[i] * x[i + lag]; e1 += x[i] * x[i]; e2 += x[i + lag] * x[i + lag]; }
+      corr[lag] = s / Math.sqrt(e1 * e2 + 1e-12);
+      if(lag >= minLag && lag <= maxLag && corr[lag] > maxC) maxC = corr[lag];
+    }
+    if(maxC < 0.6) return 0;
+    // 1 オクターブ下を拾う誤りを避けるため、最大値に近い最初の山を選ぶ
+    let best = 0;
+    for(let lag = minLag; lag <= maxLag; lag++){
+      if(corr[lag] >= maxC * 0.9 && corr[lag] >= corr[lag - 1] && corr[lag] >= corr[lag + 1]){ best = lag; break; }
+    }
+    if(!best) return 0;
+    const a = corr[best - 1], b = corr[best], c = corr[best + 1];
+    const denom = a - 2 * b + c;
+    const shift = denom !== 0 ? 0.5 * (a - c) / denom : 0;
+    return r / (best + Math.max(-0.5, Math.min(0.5, shift)));
+  }
+
+  function median(arr){
+    const s = arr.slice().sort((p, q) => p - q);
+    return s.length ? s[Math.floor(s.length / 2)] : NaN;
+  }
+
+  // 確定したばかりの発話の語尾が上がったか。語尾の約 0.12 秒と、その前の約 0.2〜0.7 秒の
+  // 声の高さを比べ、2.5 半音以上上がっていれば疑問のイントネーションとみなす。
+  function detectRising(){
+    const f = pitchFrames;
+    let i = f.length - 1;
+    if(i < 0) return false;
+    if(f[i].v){
+      // 次の発話がもう始まっている場合は、0.25 秒以上の区切りの手前まで戻る
+      let pause = 0;
+      while(i > 0){
+        if(f[i].v){ if(pause >= 250) break; pause = 0; }
+        else pause += f[i].t - f[i - 1].t;
+        i--;
+      }
+      if(pause < 250) return false;
+    } else {
+      while(i >= 0 && !f[i].v) i--;
+    }
+    if(i < 0) return false;
+    const endT = f[i].t;
+    if(performance.now() - endT > 4000) return false;
+    const tail = [];   // 新しい順
+    for(let j = i; j >= 0 && endT - f[j].t <= 700; j--) if(f[j].v) tail.push(f[j].st);
+    if(tail.length < 10) return false;
+    const rise = median(tail.slice(0, 4)) - median(tail.slice(6));
+    // 大きすぎる差は高さの読み違い（倍音など）とみなす
+    return rise >= 2.5 && rise <= 12;
   }
 
   // どのマイクが使われているかを本体へ知らせる。
@@ -506,6 +608,7 @@ public sealed class SpeechBridgeServer : IDisposable
 
   function stopLevel(){
     if(levelTimer){ clearInterval(levelTimer); levelTimer = null; }
+    pitchFrames = [];
     if(micStream){ micStream.getTracks().forEach(t => t.stop()); micStream = null; }
     if(audioCtx){ try{ audioCtx.close(); }catch(_){} audioCtx = null; }
   }

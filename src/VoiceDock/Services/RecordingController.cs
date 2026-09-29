@@ -277,7 +277,7 @@ public sealed class RecordingController : IDisposable
         ListeningChanged?.Invoke(false);
     }
 
-    private void OnFinalText(string raw)
+    private void OnFinalText(string raw, bool rising)
     {
         // 認識確定から入力までの体感遅延を減らすため、通常優先度のキュー待ちを
         // 挟まず最優先(Send)で処理する。
@@ -301,7 +301,7 @@ public sealed class RecordingController : IDisposable
 
             _overlay.ClearPartialText();
 
-            var processed = _processor.Process(raw);
+            var processed = _processor.Process(raw, rising);
 
             // 「取り消し」コマンド: 直前に入力した文字数ぶん削除する
             if (processed.Kind == ProcessedKind.Undo)

@@ -163,8 +163,14 @@ public class AppSettings
     /// <summary>無音自動停止の秒数として選べる値（0 は自動停止しない）。</summary>
     public static readonly int[] SilenceAutoStopChoices = { 15, 30, 60, 0 };
 
-    /// <summary>発話の区切りごとに文末へ「。」を自動挿入する</summary>
+    /// <summary>
+    /// 発話の区切りごとに文末へ「。」を自動挿入する。
+    /// オフのときは、認識エンジンが区切りごとに付けてくる文末の「。」を取り除く。
+    /// </summary>
     public bool AutoPeriod { get; set; } = false;
+
+    /// <summary>語尾が上がる話し方（疑問のイントネーション）のとき、文末に「？」を付ける</summary>
+    public bool QuestionByIntonation { get; set; } = true;
 
     /// <summary>録音開始/停止時に操作音を鳴らす</summary>
     public bool SoundFeedback { get; set; } = true;

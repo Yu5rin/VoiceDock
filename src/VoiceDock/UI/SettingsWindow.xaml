@@ -103,7 +103,11 @@
                         <TextBlock Text="認識結果の後処理を設定します" Style="{StaticResource SubText}" Margin="0,2,0,6"/>
                         <CheckBox x:Name="RemoveSpacesCheck" Content="日本語の間の不要な半角スペースを除去する"
                                   Checked="Option_Changed" Unchecked="Option_Changed"/>
-                        <CheckBox x:Name="AutoPeriodCheck" Content="発話の区切りごとに文末へ「。」を自動挿入する" Margin="0,8,0,0"
+                        <CheckBox x:Name="RemovePunctuationCheck" Content="認識エンジンが自動で付ける句読点（、。）を取り除く" Margin="0,8,0,0"
+                                  Checked="Option_Changed" Unchecked="Option_Changed"/>
+                        <TextBlock Text="Edge などの認識エンジンは、息継ぎや文の切れ目で「、」「。」を自動で付けてきます。オンにすると、句読点は「てん」「まる」と話したときだけ入ります（日本語のみ）"
+                                   Style="{StaticResource SubText}" Margin="0,4,0,0"/>
+                        <CheckBox x:Name="AutoPeriodCheck" Content="発話の区切りごとに文末へ「。」を自動挿入する" Margin="0,10,0,0"
                                   Checked="Option_Changed" Unchecked="Option_Changed"/>
                         <TextBlock Text="※ 息継ぎのたびに区切られるため、文の途中に「。」が入ることがあります。句読点は音声コマンド（「まる」「てん」）での入力を推奨します。オフのときは、認識エンジンが区切りごとに付ける文末の「。」も取り除きます"
                                    Style="{StaticResource SubText}" Margin="0,4,0,0"/>

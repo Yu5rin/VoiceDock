@@ -309,6 +309,12 @@ public partial class App : Application
         {
             if (info == null)
             {
+                // 確認に失敗したのに「最新です」と伝えると、古い版を使い続けてしまう
+                if (manual && _updater.LastCheckError is { } error)
+                {
+                    ToastWindow.Show(error, ToastKind.Warning);
+                    return;
+                }
                 if (manual)
                 {
                     // 既に手で入れ替えた等で最新になっている場合、案内を残さない

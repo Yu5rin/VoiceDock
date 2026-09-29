@@ -104,6 +104,7 @@ public partial class SettingsWindow : Window
 
         RemoveSpacesCheck.IsChecked = settings.Current.RemoveSpaces;
         AutoPeriodCheck.IsChecked = settings.Current.AutoPeriod;
+        QuestionCheck.IsChecked = settings.Current.QuestionByIntonation;
         VoiceCommandsCheck.IsChecked = settings.Current.VoiceCommandsEnabled;
         KeyCommandsCheck.IsChecked = settings.Current.KeyCommandsEnabled;
         RemoveFillersCheck.IsChecked = settings.Current.RemoveFillers;
@@ -181,6 +182,7 @@ public partial class SettingsWindow : Window
         {
             s.RemoveSpaces = RemoveSpacesCheck.IsChecked == true;
             s.AutoPeriod = AutoPeriodCheck.IsChecked == true;
+            s.QuestionByIntonation = QuestionCheck.IsChecked == true;
             s.VoiceCommandsEnabled = VoiceCommandsCheck.IsChecked == true;
             s.KeyCommandsEnabled = KeyCommandsCheck.IsChecked == true;
             s.RemoveFillers = RemoveFillersCheck.IsChecked == true;

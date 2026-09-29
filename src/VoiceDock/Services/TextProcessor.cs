@@ -200,6 +200,17 @@ public sealed class TextProcessor
         "戻す", "もどす", "戻して", "もどして",
     };
 
+    /// <summary>認識エンジンが付ける日本語の句読点（全角のコンマ・ピリオドも含む）。</summary>
+    private static readonly Regex RecognizerPunctuation = new("[、。，．]", RegexOptions.Compiled);
+
+    /// <summary>
+    /// 認識エンジンが付けた句読点を取り除く（日本語のみ）。
+    /// Edge などの認識エンジンは、息継ぎや文の切れ目で勝手に「、」「。」を入れて返してくる。
+    /// 句読点は音声コマンド（「まる」「てん」）で入れたいという使い方に合わせ、ここで取り除く。
+    /// 英語は「3.5」「1,000」「e.g.」のような表記を壊すおそれがあるため対象にしない。
+    /// </summary>
+    internal static string RemoveRecognizerPunctuation(string text) => RecognizerPunctuation.Replace(text, "");
+
     /// <summary>
     /// 認識エンジンが付けた文末の句点と、疑問のイントネーションの「？」を整える。
     /// ・「。」の自動挿入がオフなら、認識エンジン（Edge など）が区切りごとに付けてくる文末の「。」を取り除く。
@@ -316,6 +327,8 @@ public sealed class TextProcessor
         }
 
         // 文末の句読点を整える。辞書や定型文で登録した表記の「。」は残したいため、置き換えより前に行う
+        if (s.RemoveRecognizerPunctuation && !english)
+            text = RemoveRecognizerPunctuation(text);
         text = AdjustEnding(text, english, s.AutoPeriod, s.QuestionByIntonation && risingIntonation);
         if (text.Length == 0) return new ProcessedText("", ProcessedKind.Text);
 

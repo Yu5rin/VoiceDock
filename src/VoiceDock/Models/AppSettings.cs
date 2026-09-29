@@ -169,6 +169,12 @@ public class AppSettings
     /// </summary>
     public bool AutoPeriod { get; set; } = false;
 
+    /// <summary>
+    /// 認識エンジンが自動で付ける句読点（、。）を取り除く（日本語のみ）。
+    /// 句読点は音声コマンド（「まる」「てん」）で入れたときだけ入力する。
+    /// </summary>
+    public bool RemoveRecognizerPunctuation { get; set; } = true;
+
     /// <summary>語尾が上がる話し方（疑問のイントネーション）のとき、文末に「？」を付ける</summary>
     public bool QuestionByIntonation { get; set; } = true;
 

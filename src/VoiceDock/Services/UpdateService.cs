@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.IO;
+using System.Net;
 using System.Net.Http;
 using System.Net.Http.Headers;
 using System.Security.Cryptography;
@@ -77,63 +78,148 @@ public sealed class UpdateService
     }
 
     /// <summary>
+    /// 直近の確認が失敗した理由（利用者向けの文）。成功した場合や最新版だった場合は null。
+    /// 手動で確認したときに「最新です」と誤って伝えないために使う。
+    /// </summary>
+    public string? LastCheckError { get; private set; }
+
+    /// <summary>
     /// 最新リリースを確認する。新しい版があればその情報を、無ければ null を返す。
-    /// 通信エラーは握りつぶして null を返す（起動を妨げない）。
+    /// 通信エラーは握りつぶして null を返す（起動を妨げない）。失敗した理由は LastCheckError に残す。
+    ///
+    /// 手順:
+    /// 1. リリース一覧（Atom）で最新の版を調べる。API の回数上限の対象外なので、会社の回線でも届く。
+    ///    最新版を使っていれば、ここで終わる（API は使わない）
+    /// 2. 新しい版があれば、API でリリースの詳細（添付ファイルと SHA256）を取る
+    /// 3. API が上限などで使えなければ、ダウンロード先を名前の規則から組み立てて続ける（SHA256 の照合は省く）
+    /// Atom が読めない場合は、これまでどおり API だけで確認する。
     /// </summary>
     public async Task<UpdateInfo?> CheckForUpdateAsync(bool ignoreSkipped = false, CancellationToken ct = default)
     {
         // 連打されても通信は 1 本に保つ
         if (Interlocked.Exchange(ref _checking, 1) != 0) return null;
+        LastCheckError = null;
         try
         {
-            using var http = CreateClient(CheckTimeout);
             var url = _settings.Current.UpdateApiUrl;
             if (string.IsNullOrWhiteSpace(url))
             {
                 _log.Warn("更新の確認先 URL が設定されていません");
+                LastCheckError = "更新の確認先が設定されていません。";
                 return null;
             }
 
-            using var res = await http.GetAsync(url, ct);
-            res.EnsureSuccessStatusCode();
-            var json = await res.Content.ReadAsStringAsync(ct);
+            using var http = CreateClient(CheckTimeout);
 
-            _settings.Update(s => s.LastUpdateCheckUtc = DateTime.UtcNow);
+            // 1. リリース一覧（Atom）で最新の版を調べる
+            FeedRelease? feed = null;
+            if (UpdateFeed.TryBuildAtomUrl(url) is { } atomUrl)
+            {
+                try
+                {
+                    // 既定の Accept（API の JSON）では意図が合わないので、この要求にだけ Atom 用を付ける
+                    using var req = new HttpRequestMessage(HttpMethod.Get, atomUrl);
+                    req.Headers.Accept.Clear();
+                    req.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/atom+xml"));
+                    using var res = await http.SendAsync(req, ct);
+                    res.EnsureSuccessStatusCode();
+                    feed = UpdateFeed.ParseAtom(await res.Content.ReadAsStringAsync(ct));
+                    if (feed == null) _log.Info("更新の確認: リリース一覧（Atom）に版が見つかりませんでした");
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
+                {
+                    _log.Warn($"更新の確認: リリース一覧（Atom）を読めませんでした: {ex.Message}");
+                }
+            }
 
-            var info = ParseRelease(json);
+            if (feed != null)
+            {
+                _settings.Update(s => s.LastUpdateCheckUtc = DateTime.UtcNow);
+                if (!IsNewAndNotSkipped(feed.Version, ignoreSkipped)) return null;
+            }
+
+            // 2. API でリリースの詳細を取る
+            UpdateInfo? info = null;
+            string? apiError = null;
+            try
+            {
+                using var res = await http.GetAsync(url, ct);
+                res.EnsureSuccessStatusCode();
+                var json = await res.Content.ReadAsStringAsync(ct);
+                _settings.Update(s => s.LastUpdateCheckUtc = DateTime.UtcNow);
+                info = ParseRelease(json);
+                if (info == null)
+                {
+                    _log.Info("更新の確認: リリース情報を解釈できませんでした");
+                    LastCheckError = "リリース情報を読み取れませんでした。リリースページをご確認ください。";
+                    return null;
+                }
+            }
+            catch (HttpRequestException ex) when (ex.StatusCode is HttpStatusCode.Forbidden or HttpStatusCode.TooManyRequests)
+            {
+                _log.Warn($"更新の確認: 配布元（GitHub API）への問い合わせが回数の上限に達していました ({ex.Message})");
+                apiError = RateLimitMessage;
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
+            {
+                _log.Warn($"更新を確認できませんでした: {ex.Message}");
+                apiError = $"更新を確認できませんでした。{UserMessage.Describe(ex)}";
+            }
+
+            // 3. API が使えなければ、Atom で分かった版のダウンロード先を組み立てる
             if (info == null)
             {
-                _log.Info("更新の確認: リリース情報を解釈できませんでした");
-                return null;
+                var built = feed == null ? null : UpdateFeed.TryBuildDownloadUrl(url, feed.TagName);
+                if (feed == null || built == null)
+                {
+                    LastCheckError = apiError;
+                    return null;
+                }
+                _log.Info($"更新の確認: API が使えなかったため、ダウンロード先を組み立てて続けます（SHA256 の照合は省きます）: {built}");
+                info = new UpdateInfo(feed.Version, feed.TagName, built, 0, null, feed.ReleaseUrl, feed.Notes);
             }
 
-            // 比較は必ず数値として行う（文字列比較だと 1.0.10 < 1.0.9 と誤判定するため）
-            if (info.Version <= CurrentVersion)
-            {
-                _log.Info($"更新の確認: 最新版を使用中です (現在 {CurrentVersion}, 最新 {info.Version})");
-                return null;
-            }
-
-            // 利用者が「この版はスキップ」を選んでいる場合、自動確認では案内しない
-            if (!ignoreSkipped && _settings.Current.SkippedVersion == info.Version.ToString())
-            {
-                _log.Info($"更新の確認: バージョン {info.Version} はスキップ指定されています");
-                return null;
-            }
-
-            _log.Info($"更新の確認: 新しい版があります (現在 {CurrentVersion} → {info.Version})");
-            return info;
+            // Atom で新しい版と判定済みで、API も同じ版を返したなら、もう一度判定しない（ログが二重になる）
+            if (feed != null && info.Version == feed.Version) return info;
+            return IsNewAndNotSkipped(info.Version, ignoreSkipped) ? info : null;
         }
         catch (Exception ex)
         {
             // 更新が確認できなくても動作に支障はないため、警告に留める
             _log.Warn($"更新を確認できませんでした: {ex.Message}");
+            LastCheckError = $"更新を確認できませんでした。{UserMessage.Describe(ex)}";
             return null;
         }
         finally
         {
             Volatile.Write(ref _checking, 0);
         }
+    }
+
+    /// <summary>API の回数上限に当たったときの説明。自分の操作が原因ではないことが分かるようにする。</summary>
+    private const string RateLimitMessage =
+        "配布元（GitHub）への問い合わせが回数の上限に達していました。この上限は同じ回線を使う人たちで共有されるため、" +
+        "会社などでは自分が何度も確認していなくても起こります。しばらくおいてから確認するか、リリースページから直接ダウンロードしてください。";
+
+    /// <summary>新しい版で、かつ（自動確認では）スキップ指定されていないか。結果をログに残す。</summary>
+    private bool IsNewAndNotSkipped(Version latest, bool ignoreSkipped)
+    {
+        // 比較は必ず数値として行う（文字列比較だと 1.0.10 < 1.0.9 と誤判定するため）
+        if (latest <= CurrentVersion)
+        {
+            _log.Info($"更新の確認: 最新版を使用中です (現在 {CurrentVersion}, 最新 {latest})");
+            return false;
+        }
+
+        // 利用者が「この版はスキップ」を選んでいる場合、自動確認では案内しない
+        if (!ignoreSkipped && _settings.Current.SkippedVersion == latest.ToString())
+        {
+            _log.Info($"更新の確認: バージョン {latest} はスキップ指定されています");
+            return false;
+        }
+
+        _log.Info($"更新の確認: 新しい版があります (現在 {CurrentVersion} → {latest})");
+        return true;
     }
 
     /// <summary>リリース JSON から、Windows 向け exe アセットの情報を取り出す。</summary>
@@ -197,14 +283,7 @@ public sealed class UpdateService
     }
 
     /// <summary>"v0.6.2" のようなタグ名からバージョンを取り出す。</summary>
-    private static bool TryParseVersion(string tag, out Version version)
-    {
-        var s = tag.TrimStart('v', 'V');
-        // "0.6.2-beta" のような接尾辞を落とす
-        int cut = s.IndexOfAny(new[] { '-', '+' });
-        if (cut >= 0) s = s[..cut];
-        return Version.TryParse(s, out version!);
-    }
+    private static bool TryParseVersion(string tag, out Version version) => UpdateFeed.TryParseVersion(tag, out version);
 
     /// <summary>
     /// 更新ファイルを一時フォルダへダウンロードし、SHA256 を検証する。
@@ -219,6 +298,8 @@ public sealed class UpdateService
         Directory.CreateDirectory(TempDir);
         var path = Path.Combine(TempDir, $"VoiceDock-{info.TagName}.exe");
 
+        // 失敗した理由を後から追えるよう、取得先と結果をログに残す（以前は画面にしか出ず、原因が分からなかった）
+        _log.Info($"更新ファイルをダウンロードします: {info.DownloadUrl}");
         try
         {
             using var http = CreateClient(DownloadTimeout);
@@ -239,8 +320,12 @@ public sealed class UpdateService
                 if (total > 0) progress?.Report((double)read / total);
             }
         }
-        catch
+        catch (Exception ex)
         {
+            if (ex is OperationCanceledException && ct.IsCancellationRequested)
+                _log.Info("更新ファイルのダウンロードを中止しました");
+            else
+                _log.Warn($"更新ファイルをダウンロードできませんでした: {ex.GetType().Name}: {ex.Message}");
             // 中断・失敗した場合、書きかけのファイルを残さない
             TryDelete(path);
             throw;
@@ -252,6 +337,7 @@ public sealed class UpdateService
             var actual = await Task.Run(() => ComputeSha256(path), ct);
             if (!string.Equals(actual, expected, StringComparison.OrdinalIgnoreCase))
             {
+                _log.Warn($"更新ファイルの SHA256 が一致しませんでした (期待 {expected} / 実際 {actual})");
                 TryDelete(path);
                 throw new InvalidOperationException(
                     $"ダウンロードしたファイルの検証に失敗しました (SHA256 不一致)");
@@ -260,7 +346,7 @@ public sealed class UpdateService
         }
         else
         {
-            _log.Warn("リリースに SHA256 が含まれていないため、ハッシュ検証を行いませんでした（通信は HTTPS で保護されています）");
+            _log.Warn("SHA256 が分からないため、ハッシュ検証を行いませんでした（通信は HTTPS で保護されています）");
         }
 
         return path;
@@ -409,9 +495,17 @@ public sealed class UpdateService
     /// <summary>更新ファイル（数十 MB）のダウンロードのタイムアウト。</summary>
     private static readonly TimeSpan DownloadTimeout = TimeSpan.FromMinutes(10);
 
+    /// <summary>
+    /// テストで通信を差し替えるための口（回数上限などの応答を再現して、確認の流れを試すため）。
+    /// アプリの動作では常に null。
+    /// </summary>
+    internal static HttpMessageHandler? TestHandler;
+
     private static HttpClient CreateClient(TimeSpan timeout)
     {
-        var http = new HttpClient { Timeout = timeout };
+        var http = TestHandler != null
+            ? new HttpClient(TestHandler, disposeHandler: false) { Timeout = timeout }
+            : new HttpClient { Timeout = timeout };
         // GitHub API は User-Agent を要求する
         http.DefaultRequestHeaders.UserAgent.Add(
             new ProductInfoHeaderValue("VoiceDock", CurrentVersion.ToString()));

@@ -175,6 +175,19 @@ public class AppSettings
     /// </summary>
     public bool RemoveRecognizerPunctuation { get; set; } = true;
 
+    /// <summary>
+    /// 漢数字を算用数字にそろえる（日本語のみ。「三時半」→「3時半」）。
+    /// 「一緒」「一人」「十分（じゅうぶん）」のような言葉は変えない。
+    /// </summary>
+    public bool KanjiToArabic { get; set; } = true;
+
+    /// <summary>
+    /// 新しい版が見つかったら裏でダウンロードしておき、使っていないとき（音声入力をしておらず、
+    /// VoiceDock の画面も開いておらず、PC の操作もしばらく無いとき）に自動で入れ替えて再起動する。
+    /// オフなら、これまでどおり更新画面で確認してから更新する。
+    /// </summary>
+    public bool AutoApplyUpdate { get; set; } = true;
+
     /// <summary>語尾が上がる話し方（疑問のイントネーション）のとき、文末に「？」を付ける</summary>
     public bool QuestionByIntonation { get; set; } = true;
 

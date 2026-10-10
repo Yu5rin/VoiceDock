@@ -108,6 +108,9 @@ public sealed class RecordingController : IDisposable
     /// <summary>最後に文字を入力したアプリの名前（画面表示用）。</summary>
     public string LastTargetApp { get; private set; } = "";
 
+    /// <summary>最後に音声入力を使った時刻（開始・停止・文字の入力）。使っていないときに更新を入れ替えるために使う。</summary>
+    public DateTime LastUsedUtc { get; private set; } = DateTime.UtcNow;
+
     /// <summary>認識履歴（新しいものが先頭）。</summary>
     public IReadOnlyList<RecognitionRecord> History
     {
@@ -251,6 +254,7 @@ public sealed class RecordingController : IDisposable
 
         _listening = true;
         _stoppedAtUtc = DateTime.MinValue;
+        LastUsedUtc = DateTime.UtcNow;
         _imeRestoreTimer.Stop();
         _activeLanguage = _settings.Current.RecognitionLanguage;
         _ = _bridge.StartRecognitionAsync(_settings.Current.PreferLocalRecognition, _activeLanguage);
@@ -267,6 +271,7 @@ public sealed class RecordingController : IDisposable
         if (!_listening) return;
         _listening = false;
         _stoppedAtUtc = DateTime.UtcNow;
+        LastUsedUtc = DateTime.UtcNow;
         ScheduleImeRestore();
         _ = _bridge.StopRecognitionAsync();
         StopSilenceTimer();
@@ -466,6 +471,7 @@ public sealed class RecordingController : IDisposable
         _lastInjectedText = isCommand ? "" : text.Trim();
         _lastTargetWindow = window;
         LastTargetApp = app;
+        LastUsedUtc = DateTime.UtcNow;
         return app;
     }
 

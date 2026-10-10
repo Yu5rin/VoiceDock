@@ -499,7 +499,7 @@ public sealed class UpdateService
     /// テストで通信を差し替えるための口（回数上限などの応答を再現して、確認の流れを試すため）。
     /// アプリの動作では常に null。
     /// </summary>
-    internal static HttpMessageHandler? TestHandler;
+    internal static HttpMessageHandler? TestHandler = null;
 
     private static HttpClient CreateClient(TimeSpan timeout)
     {

@@ -332,6 +332,11 @@ public sealed class TextProcessor
         text = AdjustEnding(text, english, s.AutoPeriod, s.QuestionByIntonation && risingIntonation);
         if (text.Length == 0) return new ProcessedText("", ProcessedKind.Text);
 
+        // 漢数字を算用数字にそろえる（「三時半」→「3時半」）。幅の変換（全角にそろえる設定）が
+        // 数字にも効くよう、その前に行う。辞書で登録した表記は変えないよう、置き換えより前に行う
+        if (s.KanjiToArabic && !english)
+            text = KanjiNumberConverter.Convert(text);
+
         // 英数字の幅をそろえる。辞書で登録した表記（例: 請求No.）はそのまま出したいため、
         // 辞書の置き換えより前に行う
         if (!english)

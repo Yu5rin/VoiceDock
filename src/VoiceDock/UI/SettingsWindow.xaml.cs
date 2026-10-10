@@ -106,6 +106,8 @@ public partial class SettingsWindow : Window
         AutoPeriodCheck.IsChecked = settings.Current.AutoPeriod;
         QuestionCheck.IsChecked = settings.Current.QuestionByIntonation;
         RemovePunctuationCheck.IsChecked = settings.Current.RemoveRecognizerPunctuation;
+        KanjiNumberCheck.IsChecked = settings.Current.KanjiToArabic;
+        AutoUpdateCheck.IsChecked = settings.Current.AutoApplyUpdate;
         VoiceCommandsCheck.IsChecked = settings.Current.VoiceCommandsEnabled;
         KeyCommandsCheck.IsChecked = settings.Current.KeyCommandsEnabled;
         RemoveFillersCheck.IsChecked = settings.Current.RemoveFillers;
@@ -185,6 +187,8 @@ public partial class SettingsWindow : Window
             s.AutoPeriod = AutoPeriodCheck.IsChecked == true;
             s.QuestionByIntonation = QuestionCheck.IsChecked == true;
             s.RemoveRecognizerPunctuation = RemovePunctuationCheck.IsChecked == true;
+            s.KanjiToArabic = KanjiNumberCheck.IsChecked == true;
+            s.AutoApplyUpdate = AutoUpdateCheck.IsChecked == true;
             s.VoiceCommandsEnabled = VoiceCommandsCheck.IsChecked == true;
             s.KeyCommandsEnabled = KeyCommandsCheck.IsChecked == true;
             s.RemoveFillers = RemoveFillersCheck.IsChecked == true;

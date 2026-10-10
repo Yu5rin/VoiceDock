@@ -1,4 +1,5 @@
 using System.Windows;
+using System.Windows.Threading;
 using VoiceDock.Models;
 using VoiceDock.Services;
 using VoiceDock.UI;
@@ -39,6 +40,20 @@ public partial class App : Application
 
     /// <summary>起動時の確認で見つかった更新（トレイから開くまで保持する）。</summary>
     private UpdateInfo? _pendingUpdate;
+
+    /// <summary>使っていないときに入れ替えるため、裏でダウンロードしておいた新しい版。</summary>
+    private UpdateInfo? _preparedUpdate;
+    private string? _preparedUpdateFile;
+    private bool _preparingUpdate;
+
+    /// <summary>使っていないかを確かめ、入れ替えるためのタイマー（ダウンロードが済んでから動かす）。</summary>
+    private DispatcherTimer? _idleUpdateTimer;
+
+    /// <summary>起動したまま何日も使う人のため、起動中も定期的に新しい版を確かめるタイマー。</summary>
+    private DispatcherTimer? _periodicUpdateCheckTimer;
+
+    private static readonly TimeSpan IdleUpdateCheckInterval = TimeSpan.FromSeconds(30);
+    private static readonly TimeSpan PeriodicUpdateCheckInterval = TimeSpan.FromHours(6);
 
     protected override void OnStartup(StartupEventArgs e)
     {
@@ -280,9 +295,23 @@ public partial class App : Application
             ToastWindow.Show($"VoiceDock へようこそ。テキスト入力欄にカーソルを置き、{_settings.Current.Hotkey} を押して話すと文字が入力されます。");
         }
 
+        // 更新で再起動した直後は、更新できたことを知らせる（自動で入れ替えた場合、利用者は再起動に気づいていない）
+        if (afterUpdate)
+            ToastWindow.Show($"VoiceDock を v{UpdateService.CurrentVersion} に更新しました。");
+
         // 更新の確認。通信が起動をブロックしないよう非同期で行う
         if (_updater.ShouldCheckOnStartup())
             _ = CheckForUpdateAsync(manual: false);
+
+        // 起動したまま使い続ける場合も、自動で入れ替える設定なら定期的に確かめる
+        _periodicUpdateCheckTimer = new DispatcherTimer { Interval = PeriodicUpdateCheckInterval };
+        _periodicUpdateCheckTimer.Tick += (_, _) =>
+        {
+            if (_settings?.Current is { AutoApplyUpdate: true } s && s.UpdateCheckMode != UpdateCheckMode.Manual
+                && _preparedUpdate == null && !_preparingUpdate)
+                _ = CheckForUpdateAsync(manual: false);
+        };
+        _periodicUpdateCheckTimer.Start();
     }
 
     /// <summary>
@@ -332,10 +361,98 @@ public partial class App : Application
             {
                 _pendingUpdate = info;
                 _tray?.SetUpdateAvailable(true);
+
+                // 自動で入れ替える設定なら、画面は出さずに裏でダウンロードし、使っていないときに入れ替える
+                if (_settings!.Current.AutoApplyUpdate && UpdateService.CanWriteToInstallDir(out _))
+                {
+                    _ = PrepareAutoUpdateAsync(info);
+                    return;
+                }
             }
 
             ShowUpdateWindow(info);
         });
+    }
+
+    /// <summary>
+    /// 新しい版を裏でダウンロードし、使っていないときに入れ替えるよう待つ。
+    /// ダウンロードに失敗したら、これまでどおり更新画面で知らせる。
+    /// </summary>
+    private async Task PrepareAutoUpdateAsync(UpdateInfo info)
+    {
+        if (_updater == null || _preparingUpdate) return;
+        if (_preparedUpdate != null && _preparedUpdate.Version >= info.Version) return;
+
+        _preparingUpdate = true;
+        try
+        {
+            _log?.Info($"新しい版 {info.Version} を裏でダウンロードします（使っていないときに自動で入れ替えます）");
+            var file = await _updater.DownloadAsync(info, progress: null);
+            _preparedUpdate = info;
+            _preparedUpdateFile = file;
+            ToastWindow.Show($"新しい版 v{info.Version} を用意しました。使っていないときに自動で入れ替えます" +
+                             "（音声入力中や VoiceDock の画面を開いている間は入れ替えません）。");
+
+            _idleUpdateTimer ??= CreateIdleUpdateTimer();
+            _idleUpdateTimer.Start();
+        }
+        catch (Exception ex)
+        {
+            _log?.Warn($"新しい版を裏でダウンロードできませんでした。更新画面で知らせます: {ex.Message}");
+            ShowUpdateWindow(info);
+        }
+        finally
+        {
+            _preparingUpdate = false;
+        }
+    }
+
+    private DispatcherTimer CreateIdleUpdateTimer()
+    {
+        var timer = new DispatcherTimer { Interval = IdleUpdateCheckInterval };
+        timer.Tick += async (_, _) => await TryApplyPreparedUpdateAsync();
+        return timer;
+    }
+
+    /// <summary>使っていなければ、用意しておいた新しい版へ入れ替えて再起動する。</summary>
+    private async Task TryApplyPreparedUpdateAsync()
+    {
+        if (_updater == null || _controller == null || _settings == null) return;
+        var info = _preparedUpdate;
+        var file = _preparedUpdateFile;
+        if (info == null || file == null || !System.IO.File.Exists(file))
+        {
+            _idleUpdateTimer?.Stop();
+            return;
+        }
+        // 途中で設定をオフにした場合は、更新画面での確認に戻す
+        if (!_settings.Current.AutoApplyUpdate)
+        {
+            _idleUpdateTimer?.Stop();
+            return;
+        }
+
+        bool windowOpen = Windows.OfType<Window>().Any(w => w.IsVisible && w is not OverlayWindow && w is not ToastWindow);
+        var reason = IdleUpdatePolicy.WhyNotNow(
+            _controller.IsListening,
+            DateTime.UtcNow - _controller.LastUsedUtc,
+            UserIdle.SinceLastInput(),
+            windowOpen);
+        if (reason != null) return;
+
+        _idleUpdateTimer?.Stop();
+        _log?.Info($"使っていないため、新しい版 {info.Version} へ入れ替えます");
+        bool applied = await Task.Run(() => _updater.ApplyUpdate(file));
+        if (applied)
+        {
+            ExitApplication();
+            return;
+        }
+
+        // 入れ替えに失敗した場合は元の版のまま動いている。更新画面から手動で更新できるようにする
+        _preparedUpdate = null;
+        _preparedUpdateFile = null;
+        ToastWindow.Show("新しい版へ自動で入れ替えられませんでした。トレイメニューの「更新を確認」から更新してください。", ToastKind.Warning);
     }
 
     private void ShowUpdateWindow(UpdateInfo info)
@@ -629,6 +746,8 @@ public partial class App : Application
 
     protected override void OnExit(ExitEventArgs e)
     {
+        _idleUpdateTimer?.Stop();
+        _periodicUpdateCheckTimer?.Stop();
         _watchdog?.Stop();
         _controller?.Dispose();
         // 辞書の使用回数はまとめて保存しているため、終了前に書き出す

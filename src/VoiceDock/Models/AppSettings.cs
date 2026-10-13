@@ -66,7 +66,7 @@ public enum HotkeyMode
 }
 
 /// <summary>
-/// アプリ設定。%APPDATA%\VoiceDock\settings.json に保存される。
+/// アプリ設定。保存先（AppPaths.Root）の settings.json に保存される。
 /// </summary>
 public class AppSettings
 {

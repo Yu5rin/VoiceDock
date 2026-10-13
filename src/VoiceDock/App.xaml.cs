@@ -73,11 +73,16 @@ public partial class App : Application
             Dispatcher.BeginInvoke(() =>
                 ToastWindow.Show("VoiceDock は既に起動しています。タスクトレイのアイコンから操作できます。"));
 
+        // 以前の版は %APPDATA%\VoiceDock に保存していた。exe の隣の data フォルダへ写してから読み込む
+        int migrated = AppPaths.IsPortable ? AppPaths.MigrateFromLegacy() : 0;
         AppPaths.EnsureDirectories();
 
         _log = new LogService();
         _log.CleanupOldLogs();
         _log.Info("VoiceDock を起動しました");
+        _log.Info($"保存先: {AppPaths.Root}" + (AppPaths.IsPortable ? "" : "（exe の場所に書き込めないため）"));
+        if (migrated > 0)
+            _log.Info($"以前の保存先（{AppPaths.LegacyRoot}）から {migrated} 個のファイルを写しました。以前の保存先はそのまま残しています");
 
         _settings = new SettingsService(_log);
         _settings.Load();

@@ -128,9 +128,15 @@ public sealed class BrowserLauncher : IDisposable
     /// </summary>
     private void KillProfileInstance()
     {
+        // 以前の版の保存場所（%APPDATA%）のプロファイルで動いているものも片付ける
+        foreach (var profile in new[] { AppPaths.BrowserProfileDir, AppPaths.LegacyBrowserProfileDir }.Distinct())
+            KillProfileInstance(profile);
+    }
+
+    private void KillProfileInstance(string profile)
+    {
         try
         {
-            var profile = AppPaths.BrowserProfileDir;
             for (int i = 0; i < 5; i++)
             {
                 var hwnd = FindWindowEx(HwndMessage, IntPtr.Zero, "Chrome_MessageWindow", profile);

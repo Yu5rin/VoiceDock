@@ -6,7 +6,7 @@ using VoiceDock.Models;
 namespace VoiceDock.Services;
 
 /// <summary>
-/// 設定の読み書き。%APPDATA%\VoiceDock\settings.json に JSON で保存する。
+/// 設定の読み書き。保存先（AppPaths.Root）の settings.json に JSON で保存する。
 /// 設定画面からの変更は即時反映（即時保存）とする。
 ///
 /// 保存は SafeFile 経由で原子的に行い、破損時は .bak から復帰する。

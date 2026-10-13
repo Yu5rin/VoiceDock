@@ -22,7 +22,7 @@ public record LogEntry(DateTime Time, LogLevel Level, string Message)
 
 /// <summary>
 /// ログ機能。エラー・動作ログと認識テキスト履歴を
-/// %APPDATA%\VoiceDock\logs に日別ファイルで永続化し、30日経過分を自動削除する。
+/// 保存先（AppPaths.LogsDir）に日別ファイルで永続化し、30日経過分を自動削除する。
 /// 画面表示用に直近のエントリをメモリにも保持する。
 /// </summary>
 public sealed class LogService

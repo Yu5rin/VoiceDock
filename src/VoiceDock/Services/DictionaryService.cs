@@ -12,7 +12,7 @@ namespace VoiceDock.Services;
 /// 辞書登録機能。社内用語・人名などの誤認識対策として、
 /// 認識後の文字列を「誤認識語→正しい語」で強制置換する。
 /// （Web Speech API では認識前のヒント指定ができないため、後段の置換で対応する）
-/// データは %APPDATA%\VoiceDock\dictionary.json に保存し、CSV でエクスポート/インポートできる。
+/// データは保存先（AppPaths.Root）の dictionary.json に保存し、CSV でエクスポート/インポートできる。
 /// </summary>
 public sealed class DictionaryService
 {

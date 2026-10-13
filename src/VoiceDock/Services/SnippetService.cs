@@ -12,7 +12,7 @@ namespace VoiceDock.Services;
 /// 例: 「じゅうしょ」→ 会社の住所全文、「めーる」→ メールアドレス。
 /// 誤爆を避けるため、発話全体が読みと一致した場合のみ展開する
 /// （文中に含まれるだけでは展開しない）。
-/// データは %APPDATA%\VoiceDock\snippets.json に保存する。
+/// データは保存先（AppPaths.Root）の snippets.json に保存する。
 /// </summary>
 public sealed class SnippetService
 {

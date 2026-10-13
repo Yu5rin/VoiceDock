@@ -57,6 +57,8 @@ public partial class DiagnosticsWindow : Window
         _statusReport.Clear();
 
         AddRow(StatusPanel, _statusReport, "バージョン", $"v{UpdateService.CurrentVersion}", null);
+        AddRow(StatusPanel, _statusReport, "保存先",
+            AppPaths.Root + (AppPaths.IsPortable ? "" : "（exe の場所に書き込めないため、こちらに保存しています）"), null);
 
         bool connected = _bridge?.IsConnected == true;
         AddRow(StatusPanel, _statusReport, "認識エンジン",

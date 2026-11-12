@@ -172,6 +172,8 @@ public static class TextInjector
         }
         catch
         {
+            // 貼り付けられなくても、控えは書き戻す（残したままだと、次の貼り付けで古い内容を書き戻してしまう）
+            if (backup != null) RestoreClipboardLater(backup);
             return false;
         }
         finally

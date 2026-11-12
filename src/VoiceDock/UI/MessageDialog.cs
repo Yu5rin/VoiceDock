@@ -91,6 +91,8 @@ public static class MessageDialog
         {
             var button = new Button { Content = text, MinWidth = 96, Margin = new Thickness(8, 0, 0, 0) };
             if (styleKey != null) button.Style = (Style)Application.Current.FindResource(styleKey);
+            // フォーカスのあるボタンを Enter で押せるようにする（付けないと、Enter は常に既定のボタンへ行く）
+            System.Windows.Input.KeyboardNavigation.SetAcceptsReturn(button, true);
             button.Click += (_, _) => { result = value; window.Close(); };
             return button;
         }

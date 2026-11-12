@@ -86,9 +86,9 @@
         <Setter Property="TextOptions.TextFormattingMode" Value="Display"/>
     </Style>
 
-    <Style TargetType="TextBlock">
-        <Setter Property="Foreground" Value="{StaticResource FgBrush}"/>
-    </Style>
+    <!-- 文字色はここで決めない（画面やボタンの文字色を受け継がせる）。ここで色を決めると、ボタンやタブの中の
+         文字にもその色が効いてしまい、押せないときの薄い色や、危険な操作の赤が出なくなる -->
+    <Style TargetType="TextBlock"/>
 
     <!-- 補足の説明。本文より一段小さく、色を落とす -->
     <Style x:Key="SubText" TargetType="TextBlock" BasedOn="{StaticResource {x:Type TextBlock}}">
@@ -530,6 +530,7 @@
                     </Grid>
                     <ControlTemplate.Triggers>
                         <Trigger Property="IsEditable" Value="True">
+                            <Setter Property="IsTabStop" Value="False"/>
                             <Setter TargetName="PART_EditableTextBox" Property="Visibility" Value="Visible"/>
                             <Setter TargetName="SelectionBox" Property="Visibility" Value="Collapsed"/>
                         </Trigger>

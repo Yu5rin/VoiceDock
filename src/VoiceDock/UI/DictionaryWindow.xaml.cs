@@ -65,7 +65,9 @@ public partial class DictionaryWindow : Window
     {
         // 書きかけの内容を黙って消さない
         if (HasUnsavedInput() && !ConfirmDiscard()) return;
+        _loadingForm = true;
         Grid.UnselectAll();
+        _loadingForm = false;
         ClearForm();
         WrongBox.Text = text.Trim();
         WrongBox.Focus();
@@ -128,6 +130,7 @@ public partial class DictionaryWindow : Window
                 $"「{correct}」に置き換えますか？",
                 MessageDialogKind.Warning, "置き換える", "キャンセル");
             if (!replace) return;
+            _loadingForm = true;   // 自分で一覧を書き換える間は、選択の変化に反応しない
             _rows.Remove(duplicate);
         }
 
@@ -140,6 +143,7 @@ public partial class DictionaryWindow : Window
             entry.LastUsed = previous.LastUsed;
         }
         bool updated = _editing != null;
+        _loadingForm = true;   // 自分で一覧を書き換える間は、選択の変化に反応しない（最後の ClearForm で戻る）
         if (_editing != null && _rows.IndexOf(_editing) is var index and >= 0)
             _rows[index] = entry;
         else
@@ -210,15 +214,36 @@ public partial class DictionaryWindow : Window
 
         // 書きかけの内容があるのに別の項目を選んだら、黙って上書きせずに確かめる
         bool wouldReplaceForm = Grid.SelectedItems.Count <= 1 && !ReferenceEquals(Grid.SelectedItem, _editing);
-        if (wouldReplaceForm && HasUnsavedInput() && !ConfirmDiscard())
+        if (wouldReplaceForm && HasUnsavedInput())
         {
-            _loadingForm = true;
-            if (_editing != null && _rows.Contains(_editing)) Grid.SelectedItem = _editing;
-            else Grid.UnselectAll();
-            _loadingForm = false;
-            DeleteButton.IsEnabled = Grid.SelectedItems.Count > 0;
+            // 確かめるのは、表が選択の処理を終えてから（処理の途中で選択を戻すと、色の付く行と実際の選択がずれる）
+            if (_confirmPending) return;
+            _confirmPending = true;
+            Dispatcher.BeginInvoke(() =>
+            {
+                _confirmPending = false;
+                if (!HasUnsavedInput() || ConfirmDiscard())
+                {
+                    ApplySelectionToForm();
+                    return;
+                }
+                _loadingForm = true;
+                if (_editing != null && _rows.Contains(_editing)) Grid.SelectedItem = _editing;
+                else Grid.UnselectAll();
+                _loadingForm = false;
+                DeleteButton.IsEnabled = Grid.SelectedItems.Count > 0;
+            });
             return;
         }
+        ApplySelectionToForm();
+    }
+
+    /// <summary>捨ててよいかの確認を出す予約をしているか（重ねて出さないため）。</summary>
+    private bool _confirmPending;
+
+    /// <summary>一覧で選んだ項目を入力欄へ読み込む（1 件だけ選んだとき）。選択が無くなったら入力欄を空にする。</summary>
+    private void ApplySelectionToForm()
+    {
 
         // 1 件だけ選んだときに、その内容をフォームへ読み込んで編集できるようにする
         if (Grid.SelectedItems.Count == 1 && Grid.SelectedItem is DictionaryEntry entry)
@@ -329,13 +354,9 @@ public partial class DictionaryWindow : Window
                 MessageDialogKind.Danger, "削除する", "キャンセル"))
             return;
 
-        // 消した後は、次の項目を選んでおく（続けて消したり、キーボードで操作を続けたりできるように）
-        var visible = _view.Cast<DictionaryEntry>().ToList();
-        int nextIndex = visible.IndexOf(targets[^1]) + 1;
-        var next = visible.Skip(nextIndex).FirstOrDefault(v => !targets.Contains(v))
-                   ?? visible.LastOrDefault(v => !targets.Contains(v));
-
         _deleted = targets.Select(t => (_rows.IndexOf(t), t)).ToList();
+        // 自分で一覧を書き換える間は、選択の変化を「別の項目を選んだ」と取り違えない
+        _loadingForm = true;
         foreach (var t in targets) _rows.Remove(t);
         Persist();
         _loadingForm = true;
@@ -343,14 +364,6 @@ public partial class DictionaryWindow : Window
         _loadingForm = false;
         ClearForm();
         UndoDeleteButton.Visibility = Visibility.Visible;
-        if (next != null && targets.Count == 1)
-        {
-            // フォームには読み込まず、行だけ選ぶ
-            _loadingForm = true;
-            Grid.SelectedItem = next;
-            _loadingForm = false;
-            Grid.ScrollIntoView(next);
-        }
         DeleteButton.IsEnabled = Grid.SelectedItems.Count > 0;
         FormStatus.Text = targets.Count == 1
             ? $"「{targets[0].Wrong} → {targets[0].Correct}」を削除しました。"
@@ -370,6 +383,7 @@ public partial class DictionaryWindow : Window
             return;
         }
         int added = 0, updated = 0;
+        _loadingForm = true;   // 自分で一覧を書き換える間は、選択の変化に反応しない
 
         foreach (var lineRaw in Clipboard.GetText().Split('\n'))
         {
@@ -396,6 +410,7 @@ public partial class DictionaryWindow : Window
             }
         }
 
+        _loadingForm = false;
         if (added + updated == 0)
         {
             FormStatus.Text = "貼り付けられる内容がありませんでした（Excel で、読みと表記の 2 列をコピーしてください）。";
@@ -450,6 +465,7 @@ public partial class DictionaryWindow : Window
         try
         {
             int count = _dictionary.ImportCsv(dialog.FileName);
+            _loadingForm = true;   // 自分で一覧を書き換える間は、選択の変化に反応しない（ClearForm で戻る）
             _rows.Clear();
             foreach (var entry in _dictionary.Entries) _rows.Add(entry);
             ForgetDeleted();
@@ -488,7 +504,8 @@ public partial class DictionaryWindow : Window
 
     private void Window_Closing(object sender, CancelEventArgs e)
     {
-        if (!HasUnsavedInput()) return;
+        // 更新で入れ替えた後の終了は取りやめられないので、答えを生かせない確認は出さない
+        if (!HasUnsavedInput() || WindowBehavior.ForceClosing) return;
         if (!MessageDialog.Show(this, "登録していない入力があります",
                 "入力欄の内容は、まだ登録されていません。登録せずに閉じますか？",
                 MessageDialogKind.Warning, "登録せずに閉じる", "入力に戻る"))

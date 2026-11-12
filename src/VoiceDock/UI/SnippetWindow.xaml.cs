@@ -125,11 +125,13 @@ public partial class SnippetWindow : Window
                 "いま入力した本文に置き換えますか？",
                 MessageDialogKind.Warning, "置き換える", "キャンセル");
             if (!replace) return;
+            _loadingForm = true;   // 自分で一覧を書き換える間は、選択の変化に反応しない
             _rows.Remove(duplicate);
         }
 
         var entry = new SnippetEntry { Phrase = phrase, Expansion = expansion };
         bool updated = _editing != null;
+        _loadingForm = true;   // 自分で一覧を書き換える間は、選択の変化に反応しない（最後の ClearForm で戻る）
         if (_editing != null && _rows.IndexOf(_editing) is var index and >= 0)
             _rows[index] = entry;
         else
@@ -196,15 +198,36 @@ public partial class SnippetWindow : Window
 
         // 書きかけの内容があるのに別の項目を選んだら、黙って上書きせずに確かめる
         bool wouldReplaceForm = Grid.SelectedItems.Count <= 1 && !ReferenceEquals(Grid.SelectedItem, _editing);
-        if (wouldReplaceForm && HasUnsavedInput() && !ConfirmDiscard())
+        if (wouldReplaceForm && HasUnsavedInput())
         {
-            _loadingForm = true;
-            if (_editing != null && _rows.Contains(_editing)) Grid.SelectedItem = _editing;
-            else Grid.UnselectAll();
-            _loadingForm = false;
-            DeleteButton.IsEnabled = Grid.SelectedItems.Count > 0;
+            // 確かめるのは、表が選択の処理を終えてから（処理の途中で選択を戻すと、色の付く行と実際の選択がずれる）
+            if (_confirmPending) return;
+            _confirmPending = true;
+            Dispatcher.BeginInvoke(() =>
+            {
+                _confirmPending = false;
+                if (!HasUnsavedInput() || ConfirmDiscard())
+                {
+                    ApplySelectionToForm();
+                    return;
+                }
+                _loadingForm = true;
+                if (_editing != null && _rows.Contains(_editing)) Grid.SelectedItem = _editing;
+                else Grid.UnselectAll();
+                _loadingForm = false;
+                DeleteButton.IsEnabled = Grid.SelectedItems.Count > 0;
+            });
             return;
         }
+        ApplySelectionToForm();
+    }
+
+    /// <summary>捨ててよいかの確認を出す予約をしているか（重ねて出さないため）。</summary>
+    private bool _confirmPending;
+
+    /// <summary>一覧で選んだ項目を入力欄へ読み込む（1 件だけ選んだとき）。選択が無くなったら入力欄を空にする。</summary>
+    private void ApplySelectionToForm()
+    {
 
         if (Grid.SelectedItems.Count == 1 && Grid.SelectedItem is SnippetEntry entry)
             LoadIntoForm(entry);
@@ -306,13 +329,9 @@ public partial class SnippetWindow : Window
                 MessageDialogKind.Danger, "削除する", "キャンセル"))
             return;
 
-        // 消した後は、次の項目を選んでおく（続けて消したり、キーボードで操作を続けたりできるように）
-        var visible = _view.Cast<SnippetEntry>().ToList();
-        int nextIndex = visible.IndexOf(targets[^1]) + 1;
-        var next = visible.Skip(nextIndex).FirstOrDefault(v => !targets.Contains(v))
-                   ?? visible.LastOrDefault(v => !targets.Contains(v));
-
         _deleted = targets.Select(t => (_rows.IndexOf(t), t)).ToList();
+        // 自分で一覧を書き換える間は、選択の変化を「別の項目を選んだ」と取り違えない
+        _loadingForm = true;
         foreach (var t in targets) _rows.Remove(t);
         Persist();
         _loadingForm = true;
@@ -320,14 +339,6 @@ public partial class SnippetWindow : Window
         _loadingForm = false;
         ClearForm();
         UndoDeleteButton.Visibility = Visibility.Visible;
-        if (next != null && targets.Count == 1)
-        {
-            // フォームには読み込まず、行だけ選ぶ
-            _loadingForm = true;
-            Grid.SelectedItem = next;
-            _loadingForm = false;
-            Grid.ScrollIntoView(next);
-        }
         DeleteButton.IsEnabled = Grid.SelectedItems.Count > 0;
         FormStatus.Text = targets.Count == 1
             ? $"「{targets[0].Phrase}」を削除しました。"
@@ -375,6 +386,7 @@ public partial class SnippetWindow : Window
         try
         {
             int count = _snippets.ImportCsv(dialog.FileName);
+            _loadingForm = true;   // 自分で一覧を書き換える間は、選択の変化に反応しない（ClearForm で戻る）
             _rows.Clear();
             foreach (var entry in _snippets.Entries) _rows.Add(entry);
             ForgetDeleted();
@@ -394,7 +406,8 @@ public partial class SnippetWindow : Window
 
     private void Window_Closing(object sender, CancelEventArgs e)
     {
-        if (!HasUnsavedInput()) return;
+        // 更新で入れ替えた後の終了は取りやめられないので、答えを生かせない確認は出さない
+        if (!HasUnsavedInput() || WindowBehavior.ForceClosing) return;
         if (!MessageDialog.Show(this, "登録していない入力があります",
                 "入力欄の内容は、まだ登録されていません。登録せずに閉じますか？",
                 MessageDialogKind.Warning, "登録せずに閉じる", "入力に戻る"))

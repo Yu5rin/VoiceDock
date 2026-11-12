@@ -547,7 +547,10 @@ public partial class SettingsWindow : Window
             return;
         }
 
-        var spec = new HotkeySpec(Keyboard.Modifiers, key);
+        // Keyboard.Modifiers は Win キーを返さないため、押されているかを別に確かめる
+        var modifiers = Keyboard.Modifiers;
+        if (Keyboard.IsKeyDown(Key.LWin) || Keyboard.IsKeyDown(Key.RWin)) modifiers |= ModifierKeys.Windows;
+        var spec = new HotkeySpec(modifiers, key);
         var warning = WarningFor(box);
         var other = isUndo ? _settings.Current.Hotkey : (_settings.Current.UndoEnabled ? _settings.Current.UndoHotkey : "");
         if (WhyUnusable(spec, other, isUndo) is { } reason)

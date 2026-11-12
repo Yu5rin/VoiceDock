@@ -20,6 +20,9 @@ public static class WindowBehavior
     /// <summary>位置と大きさの保存先。起動時に App が設定する。</summary>
     public static SettingsService? Settings { get; set; }
 
+    /// <summary>更新で入れ替えた後など、取りやめられない終了の最中か（閉じる前の確認を出さないため）。</summary>
+    public static bool ForceClosing { get; set; }
+
     /// <param name="key">位置と大きさを覚えるための画面の名前。null なら覚えない。</param>
     /// <param name="closeOnEscape">Esc で閉じるか。</param>
     public static void Attach(Window window, string? key, bool closeOnEscape = true)

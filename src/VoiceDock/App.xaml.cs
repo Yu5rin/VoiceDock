@@ -66,6 +66,9 @@ public partial class App : Application
     /// <summary>予期しないエラーを知らせた最後の時刻（同じエラーが続くときに通知で埋めないため）。</summary>
     private DateTime _unexpectedErrorNotifiedUtc = DateTime.MinValue;
 
+    /// <summary>起動が終わったか（起動の途中のエラーは、続けずに終了する）。</summary>
+    private bool _started;
+
     /// <summary>再起動の上限に達したことを知らせたか（同じ通知を繰り返さないため）。</summary>
     private bool _gaveUpNotified;
 
@@ -81,9 +84,25 @@ public partial class App : Application
     {
         DispatcherUnhandledException += (_, args) =>
         {
-            ReportUnexpectedError(args.Exception);
             args.Handled = true;
+            if (_started)
+            {
+                ReportUnexpectedError(args.Exception);
+                return;
+            }
+            // 起動の途中で失敗したまま続けると、トレイのアイコンが無いのに動き続け、次の起動もできなくなる
+            try { _log?.Error($"起動の途中でエラーが発生したため終了します: {args.Exception}"); } catch { /* 無視 */ }
+            try
+            {
+                MessageDialog.Show(null, "VoiceDock を起動できませんでした",
+                    $"起動の途中でエラーが発生しました。\n\n{args.Exception.Message}\n\nログの保存先: {AppPaths.LogsDir}",
+                    MessageDialogKind.Danger, "閉じる");
+            }
+            catch { /* 知らせられなくても終了する */ }
+            Shutdown();
         };
+        // トレイメニュー（WinForms）から起きたエラーは、上の受け皿を通らない。同じように受ける
+        System.Windows.Forms.Application.ThreadException += (_, args) => ReportUnexpectedError(args.Exception);
         TaskScheduler.UnobservedTaskException += (_, args) =>
         {
             _log?.Error($"裏の処理で予期しないエラーが発生しました: {args.Exception}");
@@ -405,6 +424,7 @@ public partial class App : Application
                 _ = CheckForUpdateAsync(manual: false);
         };
         _periodicUpdateCheckTimer.Start();
+        _started = true;
     }
 
     /// <summary>
@@ -501,7 +521,12 @@ public partial class App : Application
         catch (Exception ex)
         {
             _log?.Warn($"新しい版を裏でダウンロードできませんでした。更新画面で知らせます: {ex.Message}");
-            ShowUpdateWindow(info);
+            // 作業中のアプリからフォーカスを奪わない。話している最中は通知だけにする
+            if (_controller is { IsListening: true })
+                ToastWindow.Show($"新しい版 v{info.Version} があります。トレイメニューから更新できます。",
+                    ToastKind.Info, onClick: () => ShowUpdateWindow(info), actionHint: "クリックすると更新の画面を開きます");
+            else
+                ShowUpdateWindow(info, activate: false);
         }
         finally
         {
@@ -976,6 +1001,7 @@ public partial class App : Application
                 if (!TryCloseWindow(window)) return;
             }
         }
+        WindowBehavior.ForceClosing = force;
         _log?.Info("VoiceDock を終了します");
         Shutdown();
     }

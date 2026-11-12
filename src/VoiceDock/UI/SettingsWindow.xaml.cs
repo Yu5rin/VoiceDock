@@ -23,12 +23,19 @@ public partial class SettingsWindow : Window
     private readonly BackupService _backup;
     private readonly Func<BackupContents, bool> _restoreBackup;
     private bool _initializing = true;
+    private readonly SpeechBridgeServer? _bridge;
+
+    /// <summary>マイクの選択肢（先頭は「Windows の既定」＝装置 ID が空）。</summary>
+    private readonly List<MicrophoneDevice> _micChoices = new();
+
+    /// <summary>一覧を作り直している間は、選択の変化を設定に書かない。</summary>
+    private bool _buildingMicList;
 
     public SettingsWindow(SettingsService settings,
         Func<HotkeySpec, bool> applyHotkey, Func<HotkeySpec, bool> applyUndoHotkey,
         Action openDictionary, Action openSnippets, Action openAppRules, Action checkUpdate,
         Action restartBrowser, Func<string?> getMicrophone,
-        BackupService backup, Func<BackupContents, bool> restoreBackup)
+        BackupService backup, Func<BackupContents, bool> restoreBackup, SpeechBridgeServer? bridge = null)
     {
         InitializeComponent();
         AppTheme.ApplyToWindow(this);
@@ -43,12 +50,21 @@ public partial class SettingsWindow : Window
         _backup = backup;
         _restoreBackup = restoreBackup;
 
-        // マイクは選べない（Web Speech API に指定手段が無い）ため、
-        // 今どれが使われているかだけを見えるようにする
+        // 今どのマイクが使われているか（最後に音声入力したときのもの）
         var mic = getMicrophone();
         MicrophoneText.Text = mic is { Length: > 0 }
-            ? $"使用中のマイク: {mic}"
-            : "使用中のマイク: 音声入力を一度行うと表示されます";
+            ? $"最後に使ったマイク: {mic}"
+            : "最後に使ったマイク: 音声入力を一度行うと表示されます";
+
+        // マイクの一覧は認識用ブラウザに調べてもらう（届いたら一覧を作り直す）
+        _bridge = bridge;
+        BuildMicList(bridge?.Microphones ?? Array.Empty<MicrophoneDevice>());
+        if (bridge != null)
+        {
+            bridge.MicrophonesReported += OnMicrophonesReported;
+            Closed += (_, _) => bridge.MicrophonesReported -= OnMicrophonesReported;
+            if (bridge.IsConnected) _ = bridge.RequestMicrophonesAsync();
+        }
 
         HotkeyBox.Text = settings.Current.Hotkey;
         UndoHotkeyBox.Text = settings.Current.UndoHotkey;
@@ -267,6 +283,81 @@ public partial class SettingsWindow : Window
             UndoHotkeyWarning.Text = $"{spec} は他のアプリと衝突しているため登録できませんでした。別のキーを指定してください。";
             UndoHotkeyWarning.Visibility = Visibility.Visible;
         }
+    }
+
+    private void OnMicrophonesReported(IReadOnlyList<MicrophoneDevice> list) =>
+        Dispatcher.BeginInvoke(() => BuildMicList(list));
+
+    /// <summary>
+    /// マイクの選択肢を作り直す。選んでいるマイクは装置 ID で探し、見つからなければ名前で探す
+    /// （抜き差しで装置 ID が変わることがあるため。名前で見つかったら新しい ID に置き換える）。
+    /// どちらでも見つからなければ「（見つかりません）」として残し、勝手に既定へ戻さない。
+    /// </summary>
+    private void BuildMicList(IReadOnlyList<MicrophoneDevice> devices)
+    {
+        _buildingMicList = true;
+        try
+        {
+            var s = _settings.Current;
+            _micChoices.Clear();
+            MicCombo.Items.Clear();
+            _micChoices.Add(new MicrophoneDevice("", "Windows の既定のマイク"));
+            MicCombo.Items.Add("Windows の既定のマイク");
+            foreach (var d in devices)
+            {
+                _micChoices.Add(d);
+                MicCombo.Items.Add(d.Label);
+            }
+
+            int index = 0;
+            if (s.MicrophoneDeviceId.Length > 0)
+            {
+                index = _micChoices.FindIndex(d => d.Id == s.MicrophoneDeviceId);
+                if (index < 0 && s.MicrophoneLabel.Length > 0)
+                {
+                    index = _micChoices.FindIndex(d => d.Id.Length > 0 && d.Label == s.MicrophoneLabel);
+                    if (index > 0)
+                    {
+                        var found = _micChoices[index];
+                        _settings.Update(x => { x.MicrophoneDeviceId = found.Id; x.MicrophoneLabel = found.Label; });
+                    }
+                }
+                if (index < 0)
+                {
+                    var label = s.MicrophoneLabel.Length > 0 ? s.MicrophoneLabel : "選んでいたマイク";
+                    _micChoices.Add(new MicrophoneDevice(s.MicrophoneDeviceId, s.MicrophoneLabel));
+                    MicCombo.Items.Add(devices.Count > 0 ? $"{label}（見つかりません）" : label);
+                    index = _micChoices.Count - 1;
+                }
+            }
+            MicCombo.SelectedIndex = index;
+        }
+        finally
+        {
+            _buildingMicList = false;
+        }
+    }
+
+    private void MicCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_initializing || _buildingMicList || MicCombo.SelectedIndex < 0) return;
+        var chosen = _micChoices[MicCombo.SelectedIndex];
+        if (chosen.Id == _settings.Current.MicrophoneDeviceId) return;
+        _settings.Update(s =>
+        {
+            s.MicrophoneDeviceId = chosen.Id;
+            s.MicrophoneLabel = chosen.Id.Length > 0 ? chosen.Label : "";
+        });
+    }
+
+    private void RefreshMic_Click(object sender, RoutedEventArgs e)
+    {
+        if (_bridge is not { IsConnected: true })
+        {
+            ToastWindow.Show("認識エンジンの準備中です。数秒待ってからもう一度押してください。");
+            return;
+        }
+        _ = _bridge.RequestMicrophonesAsync();
     }
 
     private void UpdateModeCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)

@@ -174,6 +174,7 @@ public sealed class RecordingController : IDisposable
         _bridge.LevelChanged += _overlay.UpdateLevel;
         _bridge.RecognitionError += OnRecognitionError;
         _bridge.RecognitionModeReported += OnRecognitionModeReported;
+        _bridge.Ready += OnBridgeReady;
         _settings.Changed += s => _dispatcher.BeginInvoke(() => OnSettingsChanged(s));
     }
 
@@ -182,11 +183,28 @@ public sealed class RecordingController : IDisposable
     {
         lock (_sync)
         {
-            if (!_listening || s.RecognitionLanguage == _activeLanguage) return;
+            if (!_listening) return;
+            bool languageChanged = s.RecognitionLanguage != _activeLanguage;
+            bool micChanged = s.MicrophoneDeviceId != _activeMicrophone;
+            if (!languageChanged && !micChanged) return;
             _activeLanguage = s.RecognitionLanguage;
-            _ = _bridge.StartRecognitionAsync(s.PreferLocalRecognition, _activeLanguage);
+            SendStart();
+            if (languageChanged)
+                _log.Info($"認識言語を切り替えました: {RecognitionLanguages.LabelOf(s.RecognitionLanguage)}");
+            if (micChanged)
+                _log.Info($"使うマイクを切り替えました: {(s.MicrophoneLabel.Length > 0 ? s.MicrophoneLabel : "Windows の既定")}");
         }
-        _log.Info($"認識言語を切り替えました: {RecognitionLanguages.LabelOf(s.RecognitionLanguage)}");
+    }
+
+    /// <summary>今の音声入力で使っているマイク（装置 ID。空なら既定）。設定が変わったかを見分けるために持つ。</summary>
+    private string _activeMicrophone = "";
+
+    /// <summary>今の設定（端末内認識・言語・マイク）で、認識を始めるよう伝える。何度送っても害はない。</summary>
+    private void SendStart()
+    {
+        var s = _settings.Current;
+        _activeMicrophone = s.MicrophoneDeviceId;
+        _ = _bridge.StartRecognitionAsync(s.PreferLocalRecognition, _activeLanguage, s.MicrophoneDeviceId, s.MicrophoneLabel);
     }
 
     /// <summary>ホットキー押下時の入口。UI スレッドで呼ぶこと。</summary>
@@ -257,13 +275,31 @@ public sealed class RecordingController : IDisposable
         LastUsedUtc = DateTime.UtcNow;
         _imeRestoreTimer.Stop();
         _activeLanguage = _settings.Current.RecognitionLanguage;
-        _ = _bridge.StartRecognitionAsync(_settings.Current.PreferLocalRecognition, _activeLanguage);
+        SendStart();
         _tray.SetState(TrayState.Recording);
         _overlay.ShowOverlay();
         ResetSilenceTimer();
         if (_settings.Current.SoundFeedback) SoundFeedback.PlayStart();
         _log.Info("音声入力を開始しました");
         ListeningChanged?.Invoke(true);
+    }
+
+    /// <summary>
+    /// 認識用ページとつながり直したとき、音声入力中なら認識を続けるよう伝え直す。
+    /// 一瞬の切断ならページ側は認識を続けているが、ブラウザを再起動した場合は新しいページが
+    /// 何も知らないため、伝え直さないと音声入力中のまま何も入らなくなる。何度送っても害はない。
+    /// </summary>
+    private void OnBridgeReady()
+    {
+        _dispatcher.BeginInvoke(() =>
+        {
+            lock (_sync)
+            {
+                if (!_listening) return;
+                _log.Info("認識エンジンとつながり直したため、音声入力を続けます");
+                SendStart();
+            }
+        });
     }
 
     private void StopListening(string reason)

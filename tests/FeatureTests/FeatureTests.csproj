@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!--
+    Windows に依存しない処理（文章の後処理・辞書・保存先・更新の確認など）を Linux でも確かめるためのテスト。
+    アプリ本体のソースをそのまま取り込んで動かす。実行は dotnet run で、このフォルダを指定する
+  -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Version>0.0.0</Version>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+  <PropertyGroup>
+    <Src>../../src/VoiceDock</Src>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="$(Src)/Models/AppSettings.cs;$(Src)/Models/DictionaryEntry.cs;$(Src)/Models/SnippetEntry.cs;$(Src)/Models/RecognitionLanguages.cs" />
+    <Compile Include="$(Src)/Services/SettingsService.cs;$(Src)/Services/DictionaryService.cs;$(Src)/Services/SnippetService.cs;$(Src)/Services/KanaNormalizer.cs;$(Src)/Services/Csv.cs;$(Src)/Services/SafeFile.cs;$(Src)/Services/AppPaths.cs;$(Src)/Services/LogService.cs;$(Src)/Services/UserMessage.cs;$(Src)/Services/UpdateService.cs;$(Src)/Services/BackupService.cs;$(Src)/Services/TextProcessor.cs;$(Src)/Services/UndoneTracker.cs;$(Src)/Services/UpdateFeed.cs;$(Src)/Services/KanjiNumberConverter.cs;$(Src)/Services/IdleUpdatePolicy.cs;$(Src)/Services/BrowserLauncher.cs" />
+    <PackageReference Include="System.Management" Version="8.0.0" />
+  </ItemGroup>
+</Project>

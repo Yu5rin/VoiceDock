@@ -32,6 +32,15 @@ public sealed class BrowserLauncher : IDisposable
     private Process? _process;
     private Func<string>? _urlFactory;
 
+    /// <summary>起動と終了を同時に走らせない（再起動は別スレッドで行うため）。</summary>
+    private readonly object _launchLock = new();
+
+    /// <summary>再起動の処理中かどうか（重ねて再起動しないため）。</summary>
+    private int _relaunching;
+
+    /// <summary>再起動の処理中かどうか。</summary>
+    public bool IsRelaunching => Volatile.Read(ref _relaunching) != 0;
+
     /// <summary>直近の再起動時刻。古いものは順に捨てる。</summary>
     private readonly Queue<DateTime> _relaunchTimes = new();
 
@@ -63,9 +72,12 @@ public sealed class BrowserLauncher : IDisposable
     {
         _relaunchTimes.Clear();
         if (_urlFactory == null) return false;
-        KillCurrent();
-        _log.Info("設定の変更にあわせて認識用ブラウザを起動し直します");
-        return Launch(_urlFactory);
+        lock (_launchLock)
+        {
+            KillCurrent();
+            _log.Info("設定の変更にあわせて認識用ブラウザを起動し直します");
+            return Launch(_urlFactory);
+        }
     }
 
     /// <summary>実際に起動したブラウザの表示名（未起動なら null）。</summary>
@@ -87,29 +99,52 @@ public sealed class BrowserLauncher : IDisposable
         }
     }
 
-    /// <summary>前回と同じ URL でブラウザを再起動する（ウォッチドッグ用）。</summary>
-    public bool Relaunch()
+    /// <summary>
+    /// 前回と同じ URL でブラウザを再起動する（ウォッチドッグ用）。
+    /// 古いブラウザが終わるのを待つため、UI を止めないよう別スレッドで行う。重ねては走らせない。
+    /// </summary>
+    public void RelaunchInBackground()
     {
-        if (_urlFactory == null) return false;
-        if (GaveUp) return false;
+        if (_urlFactory == null || GaveUp) return;
+        if (Interlocked.Exchange(ref _relaunching, 1) != 0) return;
         _relaunchTimes.Enqueue(DateTime.UtcNow);
-        KillCurrent();
         _log.Warn($"認識用ブラウザが応答しないため再起動します" +
                   $"（直近 {RelaunchWindow.TotalMinutes:0} 分で {_relaunchTimes.Count}/{MaxRelaunchesPerWindow} 回目）");
-        // 認識ページのトークンは使い捨てのため、再起動時は新しい URL を発行する
-        bool ok = Launch(_urlFactory);
-        if (!ok && GaveUp)
-            _log.Error("認識用ブラウザを繰り返し起動できなかったため、自動再起動を停止しました");
-        return ok;
+        _ = Task.Run(() =>
+        {
+            try
+            {
+                bool ok;
+                lock (_launchLock)
+                {
+                    KillCurrent();
+                    // 認識ページのトークンは使い捨てのため、再起動時は新しい URL を発行する
+                    ok = Launch(_urlFactory);
+                }
+                if (!ok && GaveUp)
+                    _log.Error("認識用ブラウザを繰り返し起動できなかったため、自動再起動を停止しました");
+            }
+            finally
+            {
+                Volatile.Write(ref _relaunching, 0);
+            }
+        });
     }
 
-    /// <summary>今起動しているブラウザを終了させる。</summary>
+    /// <summary>
+    /// 今起動しているブラウザを終了させ、終わるまで待つ。
+    /// 待たずに次を起動すると、終わりかけの古いブラウザへ処理が渡されて新しい方がすぐ終了し、
+    /// 古い方も消えて、次の再起動まで認識できなくなっていた（実機ログ 2026-11-05〜12、約 40 秒止まる）。
+    /// </summary>
     private void KillCurrent()
     {
         try
         {
             if (_process is { HasExited: false })
+            {
                 _process.Kill(entireProcessTree: true);
+                _process.WaitForExit(5000);
+            }
         }
         catch { /* 終了失敗は無視して起動を試みる */ }
         _process?.Dispose();
@@ -130,7 +165,87 @@ public sealed class BrowserLauncher : IDisposable
     {
         // 以前の版の保存場所（%APPDATA%）のプロファイルで動いているものも片付ける
         foreach (var profile in new[] { AppPaths.BrowserProfileDir, AppPaths.LegacyBrowserProfileDir }.Distinct())
+        {
+            KillByCommandLine(profile);
             KillProfileInstance(profile);
+        }
+    }
+
+    /// <summary>
+    /// 起動引数に、この専用プロファイル（--user-data-dir）を持つ Edge / Chrome をすべて終了させる。
+    ///
+    /// メッセージ専用ウィンドウの文字列で探す方法（KillProfileInstance）だけでは、古いブラウザを
+    /// 見つけられないことがあった（実機ログで、終了させたはずのブラウザへ処理が渡されていた）。
+    /// 起動引数は確実に残るため、こちらを先に使う。普段使いのブラウザは別のプロファイルなので対象外。
+    /// </summary>
+    private void KillByCommandLine(string profile)
+    {
+        try
+        {
+            var killed = new List<int>();
+            using var searcher = new System.Management.ManagementObjectSearcher(
+                "SELECT ProcessId, CommandLine FROM Win32_Process WHERE Name = 'msedge.exe' OR Name = 'chrome.exe'");
+            foreach (var obj in searcher.Get())
+            {
+                using (obj)
+                {
+                    var commandLine = obj["CommandLine"] as string;
+                    if (!UsesProfile(commandLine, profile)) continue;
+                    int pid = Convert.ToInt32(obj["ProcessId"]);
+                    try
+                    {
+                        using var proc = Process.GetProcessById(pid);
+                        proc.Kill(entireProcessTree: true);
+                        killed.Add(pid);
+                    }
+                    catch
+                    {
+                        // 親と一緒に既に終わった子プロセスなど
+                    }
+                }
+            }
+            foreach (var pid in killed)
+            {
+                try
+                {
+                    using var proc = Process.GetProcessById(pid);
+                    proc.WaitForExit(5000);
+                }
+                catch
+                {
+                    // 既に終了している
+                }
+            }
+            if (killed.Count > 0)
+                _log.Info($"認識用プロファイルで動いていたブラウザを終了しました（{killed.Count} 個のプロセス）");
+        }
+        catch (Exception ex)
+        {
+            _log.Warn($"認識用ブラウザの検索に失敗しました: {ex.Message}");
+        }
+    }
+
+    /// <summary>起動引数が、指定した専用プロファイルを使っているか（引用符の有無・大文字小文字・末尾の区切りは区別しない）。</summary>
+    internal static bool UsesProfile(string? commandLine, string profile)
+    {
+        if (string.IsNullOrEmpty(commandLine)) return false;
+        const string key = "--user-data-dir=";
+        int i = commandLine.IndexOf(key, StringComparison.OrdinalIgnoreCase);
+        if (i < 0) return false;
+        var rest = commandLine[(i + key.Length)..];
+        string value;
+        if (rest.StartsWith('"'))
+        {
+            int end = rest.IndexOf('"', 1);
+            value = end > 0 ? rest[1..end] : rest[1..];
+        }
+        else
+        {
+            int end = rest.IndexOf(" --", StringComparison.Ordinal);
+            value = end >= 0 ? rest[..end] : rest;
+        }
+        static string Normalize(string p) => p.Trim().Trim('"').TrimEnd('\\', '/');
+        return string.Equals(Normalize(value), Normalize(profile), StringComparison.OrdinalIgnoreCase);
     }
 
     private void KillProfileInstance(string profile)
@@ -170,7 +285,9 @@ public sealed class BrowserLauncher : IDisposable
     /// 読み込ませる URL を生成する関数。認識ページのトークンは 1 回限り有効なため、
     /// 再起動のたびに新しい URL を発行できるよう関数で受け取る。
     /// </param>
-    public bool Launch(Func<string> urlFactory)
+    public bool Launch(Func<string> urlFactory) => Launch(urlFactory, retryOnHandoff: true);
+
+    private bool Launch(Func<string> urlFactory, bool retryOnHandoff)
     {
         _urlFactory = urlFactory;
 
@@ -240,10 +357,19 @@ public sealed class BrowserLauncher : IDisposable
                 {
                     try
                     {
-                        if (started.WaitForExit(1500))
-                            _log.Warn("起動した認識用ブラウザのプロセスが即座に終了しました。" +
-                                      "既存のブラウザへ処理が渡された可能性があります" +
-                                      "（動作中かどうかは認識ブリッジへの接続で判断します）");
+                        if (!started.WaitForExit(1500)) return;
+                        _log.Warn("起動した認識用ブラウザのプロセスが即座に終了しました。" +
+                                  "既存のブラウザへ処理が渡された可能性があります");
+
+                        // 起動前に片付けたのに処理が渡されたなら、受け取ったのは終わりかけの古いブラウザ。
+                        // 次の監視まで待つと 40 秒ほど認識できないため、片付け直してすぐ 1 回だけやり直す
+                        if (!retryOnHandoff) return;
+                        lock (_launchLock)
+                        {
+                            if (!ReferenceEquals(_process, started)) return;   // 既に別の起動が行われた
+                            _log.Info("残っていたブラウザを片付けて、もう一度起動します");
+                            Launch(urlFactory, retryOnHandoff: false);
+                        }
                     }
                     catch
                     {

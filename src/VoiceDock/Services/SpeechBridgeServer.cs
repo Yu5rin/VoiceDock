@@ -6,6 +6,9 @@ using System.Text.Json;
 
 namespace VoiceDock.Services;
 
+/// <summary>認識用ブラウザから見えるマイク（Id はブラウザが付ける装置 ID）。</summary>
+public sealed record MicrophoneDevice(string Id, string Label);
+
 /// <summary>
 /// Web Speech API ブリッジのローカルサーバー。
 /// 127.0.0.1 上で認識用 HTML を配信し、WebSocket でブラウザ(Edge)と双方向通信する。
@@ -48,11 +51,29 @@ public sealed class SpeechBridgeServer : IDisposable
     public bool IsConnected => _socket?.State == WebSocketState.Open;
 
     /// <summary>
+    /// 接続が切れてからの時間（つながっていれば 0）。
+    /// ページは切れても 1 秒ほどで自分からつなぎ直すため、監視はこの時間が続いたときだけ再起動する。
+    /// </summary>
+    public TimeSpan DisconnectedFor =>
+        IsConnected ? TimeSpan.Zero : DateTime.UtcNow - new DateTime(Interlocked.Read(ref _disconnectedSinceTicks), DateTimeKind.Utc);
+
+    private long _disconnectedSinceTicks = DateTime.UtcNow.Ticks;
+
+    /// <summary>
     /// 実際に使われているマイクの名前（まだ録音していない場合は null）。
     /// Web Speech API にはマイクを指定する手段が無く、常に Windows の既定デバイスが使われる。
     /// どのマイクが使われているかは、録音を開始したときに初めて分かる。
     /// </summary>
     public string? CurrentMicrophone { get; private set; }
+
+    /// <summary>認識用ブラウザから見えるマイクの一覧（まだ調べていなければ空）。</summary>
+    public IReadOnlyList<MicrophoneDevice> Microphones { get; private set; } = Array.Empty<MicrophoneDevice>();
+
+    /// <summary>マイクの一覧が届いたとき。</summary>
+    public event Action<IReadOnlyList<MicrophoneDevice>>? MicrophonesReported;
+
+    /// <summary>選んだマイクが見つからず、既定のマイクで認識しているとき（引数は選んでいたマイクの名前）。</summary>
+    public event Action<string>? SelectedMicrophoneUnavailable;
 
     /// <summary>使用中のマイクが変わったときに発火（引数は 変更前, 変更後）。</summary>
     public event Action<string?, string>? MicrophoneChanged;
@@ -104,13 +125,23 @@ public sealed class SpeechBridgeServer : IDisposable
     /// 非対応環境や言語パック未導入の場合はブラウザ側でクラウド認識にフォールバックする。
     /// </param>
     /// <param name="lang">認識言語（例: ja-JP / en-US）。認識中に変えた場合は、その場で切り替わる。</param>
-    public Task StartRecognitionAsync(bool processLocally = false, string lang = "ja-JP")
+    /// <param name="micId">使うマイクの装置 ID（空なら Windows の既定）。認識中に変えた場合は、その場で切り替わる。</param>
+    /// <param name="micLabel">使うマイクの名前（装置 ID が変わっていたときに名前で探し直すため）。</param>
+    public Task StartRecognitionAsync(bool processLocally = false, string lang = "ja-JP",
+        string micId = "", string micLabel = "")
     {
         // 言語コードは JSON にそのまま埋め込むため、英字とハイフン以外は受け付けない
         if (lang.Any(c => !(char.IsAsciiLetter(c) || c == '-'))) lang = "ja-JP";
         return SendCommandAsync("start",
-            $",\"processLocally\":{(processLocally ? "true" : "false")},\"lang\":\"{lang}\"");
+            $",\"processLocally\":{(processLocally ? "true" : "false")},\"lang\":\"{lang}\"" +
+            $",\"mic\":{JsonSerializer.Serialize(micId)},\"micLabel\":{JsonSerializer.Serialize(micLabel)}");
     }
+
+    /// <summary>
+    /// マイクの一覧を調べるよう頼む（結果は MicrophonesReported で届く）。
+    /// マイクの名前はマイクを一度開かないと分からないため、ページはごく短い間だけマイクを開く。
+    /// </summary>
+    public Task RequestMicrophonesAsync() => SendCommandAsync("devices");
 
     /// <summary>ブラウザに認識停止を指示する。</summary>
     public Task StopRecognitionAsync() => SendCommandAsync("stop");
@@ -159,7 +190,11 @@ public sealed class SpeechBridgeServer : IDisposable
                     try { previous.Abort(); previous.Dispose(); } catch { /* 無視 */ }
                 }
                 _log.Info("ブラウザが認識ブリッジに接続しました");
-                await ReceiveLoopAsync(_socket, ct);
+                var socket = _socket;
+                await ReceiveLoopAsync(socket, ct);
+                // 新しい接続に置き換わったのでなければ、ここから切れている
+                if (ReferenceEquals(_socket, socket))
+                    Interlocked.Exchange(ref _disconnectedSinceTicks, DateTime.UtcNow.Ticks);
             }
             else
             {
@@ -270,6 +305,30 @@ public sealed class SpeechBridgeServer : IDisposable
                     var detail = root.TryGetProperty("detail", out var de) ? de.GetString() : "";
                     RecognitionError?.Invoke(detail ?? "");
                     break;
+                case "devices":
+                    if (root.TryGetProperty("list", out var dl) && dl.ValueKind == JsonValueKind.Array)
+                    {
+                        var list = new List<MicrophoneDevice>();
+                        foreach (var dev in dl.EnumerateArray())
+                        {
+                            var id = dev.TryGetProperty("id", out var di) ? di.GetString() ?? "" : "";
+                            var label = dev.TryGetProperty("label", out var dlb) ? dlb.GetString() ?? "" : "";
+                            // 「既定」「通信」は Windows の既定を指す特別な項目なので、選択肢には出さない
+                            if (id.Length == 0 || id is "default" or "communications") continue;
+                            list.Add(new MicrophoneDevice(id, label.Length > 0 ? label : "（名前の分からないマイク）"));
+                        }
+                        Microphones = list;
+                        MicrophonesReported?.Invoke(list);
+                    }
+                    break;
+                case "micfallback":
+                    SelectedMicrophoneUnavailable?.Invoke(root.TryGetProperty("label", out var fl) ? fl.GetString() ?? "" : "");
+                    break;
+                case "diag":
+                    // 切断の原因を調べるため、ページが見ていた状況（切断のコード・ネットワークの変化など）を残す
+                    if (root.TryGetProperty("text", out var dt))
+                        _log.Info($"認識用ページ: {dt.GetString()}");
+                    break;
             }
         }
         catch (Exception ex)
@@ -361,17 +420,56 @@ public sealed class SpeechBridgeServer : IDisposable
   let noiseFloor = 0.01;
   const PITCH_KEEP_MS = 6000;
 
-  function send(o){ try{ if(ws && ws.readyState===1) ws.send(JSON.stringify(o)); }catch(_){} }
+  // 本体とのつながりが切れている間も、認識結果などの大事な知らせは取っておき、
+  // つながり直したらまとめて送る（切れている間に話した内容が消えないように）。
+  // 音量や認識途中の文字は、後から届いても意味がないので取っておかない。
+  const KEEP_TYPES = {final:1, mic:1, mode:1, error:1};
+  const pending = [];
+  function send(o){
+    try{
+      if(ws && ws.readyState===1){ ws.send(JSON.stringify(o)); return; }
+    }catch(_){}
+    if(KEEP_TYPES[o.type] && pending.length < 50) pending.push(o);
+  }
+
+  // 切断の原因を調べるための記録。つながり直したときに本体のログへ送る
+  let lastClose = null, netEvents = [], pageEvents = [];
+  const note = (list, s) => { list.push(s); if(list.length > 5) list.shift(); };
+  window.addEventListener('online',  () => note(netEvents, 'オンラインに戻った'));
+  window.addEventListener('offline', () => note(netEvents, 'オフラインになった'));
+  document.addEventListener('freeze', () => note(pageEvents, 'ページが凍結された'));
+  document.addEventListener('resume', () => note(pageEvents, 'ページが再開された'));
+  document.addEventListener('visibilitychange', () => note(pageEvents, '表示状態: ' + document.visibilityState));
 
   function connect(){
     ws = new WebSocket(WS_URL);
-    ws.onopen = () => send({type:'status', state:'ready'});
+    ws.onopen = () => {
+      send({type:'status', state:'ready'});
+      if(lastClose){
+        const gap = Date.now() - lastClose.at;
+        const parts = [`前回の切断 code=${lastClose.code}${lastClose.clean ? '' : '（相手の応答なし）'}`,
+                       `つながり直すまで ${gap}ms`,
+                       `音声入力中=${shouldListen ? 'はい' : 'いいえ'}`,
+                       `回線=${navigator.onLine ? 'オンライン' : 'オフライン'}`];
+        if(netEvents.length) parts.push('回線の変化: ' + netEvents.join(' → '));
+        if(pageEvents.length) parts.push('ページ: ' + pageEvents.join(' → '));
+        if(pending.length) parts.push(`取っておいた知らせ ${pending.length} 件を送ります`);
+        send({type:'diag', text: parts.join(' / ')});
+        netEvents = []; pageEvents = []; lastClose = null;
+      }
+      // 送れなかったものは send が取っておき直すので、回数を決めて回す（送れないときに回り続けないように）
+      for(let n = pending.length; n > 0; n--) send(pending.shift());
+    };
     ws.onmessage = (e) => {
       let m; try{ m = JSON.parse(e.data); }catch(_){ return; }
-      if(m.cmd === 'start') startRecog(!!m.processLocally, m.lang);
+      if(m.cmd === 'start') startRecog(!!m.processLocally, m.lang, m.mic, m.micLabel);
       else if(m.cmd === 'stop') stopRecog();
+      else if(m.cmd === 'devices') reportDevices();
     };
-    ws.onclose = () => setTimeout(connect, 1000);
+    ws.onclose = (e) => {
+      if(!lastClose) lastClose = {code: e.code, clean: e.wasClean, at: Date.now()};
+      setTimeout(connect, 1000);
+    };
     ws.onerror = () => { try{ ws.close(); }catch(_){} };
   }
 
@@ -432,16 +530,41 @@ public sealed class SpeechBridgeServer : IDisposable
     // 連続認識は無音などで自動終了することがあるため、継続希望なら再開する
     r.onend = () => {
       recogRunning = false;
-      if(shouldListen){ try{ r.start(); }catch(_){} }
+      if(shouldListen) startEngine();
     };
     return r;
   }
 
-  async function startRecog(processLocally, lang){
+  // 使うマイク。micId は本体で選んだもの（空なら Windows の既定）、activeMicId は実際に開けたもの
+  let micId = '', micLabel = '', activeMicId = '';
+  function micTrack(){ return micStream ? micStream.getAudioTracks()[0] : null; }
+
+  // 認識を始める。マイクを選んでいれば、そのマイクの音声トラックを渡す
+  // （SpeechRecognition.start(audioTrack)。対応していないブラウザでは既定のマイクで認識する）
+  function startEngine(){
+    const t = activeMicId ? micTrack() : null;
+    if(t && t.readyState === 'live'){
+      try{ recog.start(t); return; }catch(_){ /* 渡せなければ既定のマイクで始める */ }
+    }
+    try{ recog.start(); }catch(_){ /* 既に開始済みなら無視 */ }
+  }
+
+  async function startRecog(processLocally, lang, mic, label){
     shouldListen = true;
     lang = lang || 'ja-JP';
+    const micChanged = (mic || '') !== micId;
+    micId = mic || ''; micLabel = label || '';
     if(!recog) recog = setupRecog();
     if(!recog) return;
+
+    // 認識中にマイクを変えた場合は、マイクを開き直してから認識を止める（onend で新しいマイクのまま再開する）
+    if(recogRunning && micChanged){
+      recog.lang = lang;
+      stopLevel();
+      await startLevel();
+      try{ recog.stop(); }catch(_){}
+      return;
+    }
 
     // まだ前の認識が動いている（停止直後にすぐ開始した・認識中に言語を変えた）場合は、
     // 言語だけ差し替えて止める。onend で新しい言語のまま自動的に再開される。
@@ -455,7 +578,10 @@ public sealed class SpeechBridgeServer : IDisposable
     // ローカル処理の可否判定（非対応・未導入なら自動でクラウドにフォールバック）
     await applyLocalMode(recog, processLocally, lang);
     if(!shouldListen) return;   // 判定中に停止された場合
-    try{ recog.start(); }catch(_){ /* 既に開始済みなら無視 */ }
+    // マイクを選んでいる場合は、そのマイクを開いてから認識を始める（音声トラックを渡すため）
+    if(micId) await startLevel();
+    if(!shouldListen) return;
+    startEngine();
     send({type:'status', state:'listening'});
     startLevel();
   }
@@ -467,10 +593,53 @@ public sealed class SpeechBridgeServer : IDisposable
     send({type:'status', state:'stopped'});
   }
 
+  // 選んだマイクを開く。装置 ID で開けなければ名前で探し直し、それでも無ければ既定のマイクにして本体へ知らせる
+  async function openMic(){
+    const gum = (c) => navigator.mediaDevices.getUserMedia({audio: c});
+    activeMicId = '';
+    if(micId){
+      try{ const s = await gum({deviceId: {exact: micId}}); activeMicId = micId; return s; }catch(_){}
+      if(micLabel){
+        try{
+          const any = await gum(true);   // 名前を読むには、いったんマイクを開く必要がある
+          const list = await navigator.mediaDevices.enumerateDevices();
+          const found = list.find(d => d.kind === 'audioinput' && d.label === micLabel && d.deviceId);
+          if(found){
+            any.getTracks().forEach(t => t.stop());
+            const s = await gum({deviceId: {exact: found.deviceId}});
+            activeMicId = found.deviceId;
+            return s;
+          }
+          send({type:'micfallback', label: micLabel});
+          return any;
+        }catch(_){}
+      }
+      send({type:'micfallback', label: micLabel});
+    }
+    return await gum(true);
+  }
+
+  // マイクの一覧を本体へ送る。名前はマイクを開かないと分からないため、開いていなければごく短い間だけ開く
+  async function reportDevices(){
+    let temp = null;
+    try{
+      let list = await navigator.mediaDevices.enumerateDevices();
+      if(!micStream && list.some(d => d.kind === 'audioinput' && !d.label)){
+        temp = await navigator.mediaDevices.getUserMedia({audio:true});
+        list = await navigator.mediaDevices.enumerateDevices();
+      }
+      send({type:'devices', list: list.filter(d => d.kind === 'audioinput').map(d => ({id: d.deviceId, label: d.label}))});
+    }catch(_){
+      send({type:'devices', list: []});
+    }finally{
+      if(temp) temp.getTracks().forEach(t => t.stop());
+    }
+  }
+
   async function startLevel(){
     if(micStream) return;
     try{
-      micStream = await navigator.mediaDevices.getUserMedia({audio:true});
+      micStream = await openMic();
       reportMic();
       audioCtx = new (window.AudioContext || window.webkitAudioContext)();
       const src = audioCtx.createMediaStreamSource(micStream);

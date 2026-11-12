@@ -88,6 +88,15 @@ Check("プロファイル: 別のフォルダは対象外", !BrowserLauncher.Use
 Check("プロファイル: 上位のフォルダは対象外", !BrowserLauncher.UsesProfile(@"msedge.exe --user-data-dir=C:\追加\VoiceDock\data", prof));
 Check("プロファイル: 起動引数が読めない場合は対象外", !BrowserLauncher.UsesProfile(null, prof));
 
+// ── マイクの選択 ──
+Check("マイク: 既定は Windows の既定", new AppSettings().MicrophoneDeviceId == "");
+settings.Update(s => { s.MicrophoneDeviceId = "a1B2+/=_-c3"; s.MicrophoneLabel = "USB マイク"; });
+var micReload = new SettingsService(log); micReload.Load();
+Check("マイク: 選んだマイクを保存して読み直せる", micReload.Current.MicrophoneDeviceId == "a1B2+/=_-c3" && micReload.Current.MicrophoneLabel == "USB マイク");
+settings.Update(s => { s.MicrophoneDeviceId = "x\",\"evil\":\"1"; s.MicrophoneLabel = "変"; });
+Check("マイク: 想定外の文字を含む装置 ID は既定に戻す", settings.Current.MicrophoneDeviceId == "" && settings.Current.MicrophoneLabel == "");
+settings.Update(s => { s.MicrophoneDeviceId = ""; s.MicrophoneLabel = ""; });
+
 // バックアップの往復も新しい保存先で動く
 var bak = Path.Combine(home, "backup.json");
 new BackupService(settings, dict, snip, log).Save(bak);

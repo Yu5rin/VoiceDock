@@ -71,6 +71,8 @@ public partial class DiagnosticsWindow : Window
         AddRow(StatusPanel, _statusReport, "マイク",
             mic ?? "まだ分かりません（音声入力を一度行うと表示されます。Windows の既定の録音デバイスが使われます）", null);
 
+        AddRow(StatusPanel, _statusReport, "選んでいるマイク",
+            s.MicrophoneDeviceId.Length > 0 ? s.MicrophoneLabel : "Windows の既定のマイク", null);
         AddRow(StatusPanel, _statusReport, "認識言語",
             RecognitionLanguages.LabelOf(s.RecognitionLanguage) + (s.PreferLocalRecognition ? "（端末内認識を優先）" : ""), null);
 

@@ -81,5 +81,5 @@ GitHub Actions の無料枠（実行時間・アーティファクト容量）�
 
 ## 動作確認
 
-「完了」と報告する前に、必ずビルドを通し、`dotnet run --project tests/FeatureTests` のテストも通すこと。実機（Windows）でしか確認できない挙動
+「完了」と報告する前に、必ずビルドを通し、`dotnet run --project tests/FeatureTests` と `node tests/RecognizerPage/test.js` のテストも通すこと。実機（Windows）でしか確認できない挙動
 （IME、ホットキー、音声認識など）は、その旨を正直に伝え、ユーザーに確認を依頼すること。

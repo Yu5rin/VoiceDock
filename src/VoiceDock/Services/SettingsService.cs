@@ -165,6 +165,14 @@ public sealed class SettingsService
             s.UpdateApiUrl = new AppSettings().UpdateApiUrl;
         }
 
+        // マイクの装置 ID はブラウザへの指示に載るため、想定外の文字や長さは受け付けない（既定のマイクに戻す）
+        if (s.MicrophoneDeviceId.Length > 200 || s.MicrophoneDeviceId.Any(c => !(char.IsAsciiLetterOrDigit(c) || c is '+' or '/' or '=' or '_' or '-')))
+        {
+            s.MicrophoneDeviceId = "";
+            s.MicrophoneLabel = "";
+        }
+        if (s.MicrophoneLabel.Length > 200) s.MicrophoneLabel = s.MicrophoneLabel[..200];
+
         // 選べない秒数が書かれていた場合は既定の 30 秒に戻す
         if (!AppSettings.SilenceAutoStopChoices.Contains(s.SilenceAutoStopSeconds))
             s.SilenceAutoStopSeconds = 30;

@@ -131,6 +131,16 @@ public class AppSettings
     public bool PreferLocalRecognition { get; set; }
 
     /// <summary>
+    /// 音声入力に使うマイク（認識用ブラウザの中での装置 ID）。空なら Windows の既定のマイク。
+    /// 装置 ID は認識用ブラウザが付けるもので、マイクを抜き差しすると変わることがあるため、
+    /// 見つからないときは名前（MicrophoneLabel）で探し直す。
+    /// </summary>
+    public string MicrophoneDeviceId { get; set; } = "";
+
+    /// <summary>選んだマイクの名前（表示と、装置 ID が変わったときの探し直しに使う）。</summary>
+    public string MicrophoneLabel { get; set; } = "";
+
+    /// <summary>
     /// 音声コマンドを有効にする。改行・スペース等の操作、句読点（「まる」「てん」）、
     /// 記号（「アットマーク」等）の発話入力をまとめて制御する。
     /// </summary>

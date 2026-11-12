@@ -161,6 +161,13 @@ public partial class App : Application
             // 起動直後は認識できないため、準備が整ったことをトレイに反映する
             _tray?.SetState(TrayState.Idle);
         });
+        // 選んだマイクが見つからないときは、既定のマイクで続けていることを知らせる
+        _bridge.SelectedMicrophoneUnavailable += label => Dispatcher.BeginInvoke(() =>
+        {
+            _log!.Warn($"選んだマイク（{label}）が見つからないため、Windows の既定のマイクで認識します");
+            ToastWindow.Show($"選んだマイク{(label.Length > 0 ? $"「{label}」" : "")}が見つからないため、Windows の既定のマイクで認識しています。",
+                ToastKind.Warning);
+        });
         // 使用中のマイクを記録し、途中で切り替わったら知らせる
         _bridge.MicrophoneChanged += (previous, current) => Dispatcher.BeginInvoke(() =>
         {
@@ -573,7 +580,7 @@ public partial class App : Application
         }
         _settingsWindow = new SettingsWindow(_settings, ApplyHotkey, ApplyUndoHotkey,
             ShowDictionary, ShowSnippets, ShowAppRules, () => _ = CheckForUpdateAsync(manual: true),
-            RestartBrowser, () => _bridge?.CurrentMicrophone, _backup!, RestoreBackup);
+            RestartBrowser, () => _bridge?.CurrentMicrophone, _backup!, RestoreBackup, _bridge);
         _settingsWindow.Show();
         _settingsWindow.Activate();
     }

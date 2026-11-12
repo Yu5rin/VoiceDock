@@ -62,7 +62,7 @@ public partial class AppRulesWindow : Window
     public AppRulesWindow(SettingsService settings, IReadOnlyList<string> knownApps)
     {
         InitializeComponent();
-        AppTheme.ApplyToWindow(this);
+        WindowBehavior.Attach(this, "AppRules", closeOnEscape: false);   // Esc は「閉じる」ボタン（IsCancel）が受ける
         _settings = settings;
 
         var s = settings.Current;
@@ -111,14 +111,45 @@ public partial class AppRulesWindow : Window
         _rows.Add(CreateRow(name));
         AppCombo.Items.Remove(name);
         AppCombo.Text = "";
-        StatusText.Text = $"「{name}」を追加しました。入力方式か改行の送り方を選んでください（両方「既定に従う」のままなら保存されません）。";
+        StatusText.Text = $"「{name}」を追加しました。文字の入れ方か改行のキーを選んでください（両方「共通の設定に従う」のままなら、何も変わらないため保存しません）。";
+        Grid.SelectedItem = _rows[^1];
+        Grid.ScrollIntoView(_rows[^1]);
+    }
+
+    private void AppCombo_KeyDown(object sender, System.Windows.Input.KeyEventArgs e)
+    {
+        if (e.Key != System.Windows.Input.Key.Enter) return;
+        e.Handled = true;
+        Add_Click(sender, e);
+    }
+
+    private void Close_Click(object sender, RoutedEventArgs e) => Close();
+
+    private void Grid_SelectionChanged(object sender, System.Windows.Controls.SelectionChangedEventArgs e) =>
+        DeleteButton.IsEnabled = Grid.SelectedItems.Count > 0;
+
+    private void Grid_PreviewKeyDown(object sender, System.Windows.Input.KeyEventArgs e)
+    {
+        // 表の標準の削除に任せると、画面からは消えても保存されず、開き直すと戻ってしまう
+        if (e.Key != System.Windows.Input.Key.Delete || e.OriginalSource is System.Windows.Controls.TextBox) return;
+        e.Handled = true;
+        Delete_Click(sender, e);
     }
 
     private void Delete_Click(object sender, RoutedEventArgs e)
     {
-        foreach (var row in Grid.SelectedItems.OfType<Row>().ToList())
+        var targets = Grid.SelectedItems.OfType<Row>().ToList();
+        if (targets.Count == 0) return;
+        foreach (var row in targets)
+        {
             _rows.Remove(row);
+            // 消したアプリは、また候補から選べるようにする
+            if (!AppCombo.Items.Contains(row.AppName)) AppCombo.Items.Add(row.AppName);
+        }
         Persist();
+        StatusText.Text = targets.Count == 1
+            ? $"「{targets[0].AppName}」の設定を削除しました（共通の設定で動きます）。"
+            : $"{targets.Count} 件の設定を削除しました（共通の設定で動きます）。";
     }
 
     private void Persist()

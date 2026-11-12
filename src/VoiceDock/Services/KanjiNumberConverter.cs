@@ -45,6 +45,8 @@ public static class KanjiNumberConverter
         "九分九厘", "五分五分", "七五三", "百年の恋", "五月雨", "五月晴れ",
         "一時的", "一時停止", "一時保存", "一時期", "一時金", "一時中断", "一時帰", "一時預",
         "一人称", "二人称", "三人称", "億万長者", "十八番", "二番煎じ",
+        "二日酔い", "四日市", "二度と", "三位一体", "三度目の正直", "二枚舌", "三日天下",
+        "十中八九", "一年中", "十年一日", "百発百中", "二階堂", "六本木",
     };
 
     private const string BigUnits = "万億兆";
@@ -78,6 +80,11 @@ public static class KanjiNumberConverter
 
         // 「万」「億」だけ（「万年筆」「万歳」「万人受け」「億劫」）は言葉の一部。数として読むのは「一万」「十億」のように前に数が付くとき
         if (run.Length == 1 && BigUnits.Contains(run[0])) return run;
+
+        // 「数十人」「何百回」「幾千」のように、はっきりしない数は漢数字で書く
+        if (start > 0 && text[start - 1] is '数' or '何' or '幾') return run;
+        // 「十数人」「百数十」のように、後ろに「数」が続く場合も同じ
+        if (end < text.Length && text[end] == '数') return run;
 
         // 「3千円」のように数字と混ざっている場合は、書いたとおりに残す
         if (start > 0 && IsDigit(text[start - 1])) return run;

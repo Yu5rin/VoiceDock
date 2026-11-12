@@ -14,17 +14,36 @@ public enum TrayState { Idle, Recording, Error }
 /// </summary>
 public static class IconFactory
 {
-    private static readonly Dictionary<TrayState, Icon> Cache = new();
+    private static readonly Dictionary<(TrayState, bool), Icon> Cache = new();
+
+    /// <summary>
+    /// タスクバーが明るい配色か（Windows の「既定の Windows モード」がライト）。
+    /// 待機中の白っぽいアイコンは明るいタスクバーでは見えないため、濃い色で描き分ける。
+    /// </summary>
+    private static bool IsLightTaskbar()
+    {
+        try
+        {
+            using var key = Microsoft.Win32.Registry.CurrentUser.OpenSubKey(
+                @"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize");
+            return key?.GetValue("SystemUsesLightTheme") is int v && v == 1;
+        }
+        catch
+        {
+            return false;
+        }
+    }
 
     public static Icon Get(TrayState state)
     {
-        if (Cache.TryGetValue(state, out var cached)) return cached;
+        bool light = IsLightTaskbar();
+        if (Cache.TryGetValue((state, light), out var cached)) return cached;
 
         var color = state switch
         {
             TrayState.Recording => Color.FromArgb(229, 72, 77),   // 赤系アクセント
             TrayState.Error => Color.FromArgb(229, 163, 59),      // 黄・オレンジ系警告色
-            _ => Color.FromArgb(200, 200, 205),                    // モノクロ
+            _ => light ? Color.FromArgb(58, 58, 66) : Color.FromArgb(200, 200, 205),   // モノクロ（タスクバーの明暗に合わせる）
         };
 
         using var bmp = new Bitmap(32, 32);
@@ -58,7 +77,7 @@ public static class IconFactory
             // Icon.FromHandle はハンドルを所有しないため複製してから解放する
             using var tmp = Icon.FromHandle(hIcon);
             var icon = (Icon)tmp.Clone();
-            Cache[state] = icon;
+            Cache[(state, light)] = icon;
             return icon;
         }
         finally

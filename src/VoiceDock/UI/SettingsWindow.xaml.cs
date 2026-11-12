@@ -8,7 +8,7 @@ using InputMethod = VoiceDock.Models.InputMethod;
 namespace VoiceDock.UI;
 
 /// <summary>
-/// 設定画面（ダークテーマ固定・縦リスト形式・即時反映）。
+/// 設定画面（ダークテーマ固定・タブ形式・即時反映）。
 /// </summary>
 public partial class SettingsWindow : Window
 {
@@ -22,7 +22,13 @@ public partial class SettingsWindow : Window
     private readonly Action _restartBrowser;
     private readonly BackupService _backup;
     private readonly Func<BackupContents, bool> _restoreBackup;
+    private readonly Action<bool> _setHotkeyCapture;
+    private readonly Action _openDataFolder;
+    private readonly Action _reopen;
     private bool _initializing = true;
+
+    /// <summary>いまキーの入力を待っているホットキーの欄（待っていなければ null）。</summary>
+    private TextBox? _capturing;
     private readonly SpeechBridgeServer? _bridge;
 
     /// <summary>マイクの選択肢（先頭は「Windows の既定」＝装置 ID が空）。</summary>
@@ -35,11 +41,17 @@ public partial class SettingsWindow : Window
         Func<HotkeySpec, bool> applyHotkey, Func<HotkeySpec, bool> applyUndoHotkey,
         Action openDictionary, Action openSnippets, Action openAppRules, Action checkUpdate,
         Action restartBrowser, Func<string?> getMicrophone,
-        BackupService backup, Func<BackupContents, bool> restoreBackup, SpeechBridgeServer? bridge = null)
+        BackupService backup, Func<BackupContents, bool> restoreBackup, SpeechBridgeServer? bridge,
+        Action<bool> setHotkeyCapture, Action openDataFolder, Action reopen)
     {
         InitializeComponent();
-        AppTheme.ApplyToWindow(this);
+        WindowBehavior.Attach(this, "Settings", closeOnEscape: false);   // Esc は「閉じる」ボタン（IsCancel）が受ける
         _settings = settings;
+        _setHotkeyCapture = setHotkeyCapture;
+        _openDataFolder = openDataFolder;
+        _reopen = reopen;
+        // ホットキーの入力を待っている途中で閉じても、止めていたホットキーを戻す
+        Closed += (_, _) => EndCapture();
         _applyHotkey = applyHotkey;
         _applyUndoHotkey = applyUndoHotkey;
         _openDictionary = openDictionary;
@@ -70,14 +82,26 @@ public partial class SettingsWindow : Window
         UndoHotkeyBox.Text = settings.Current.UndoHotkey;
         StartupCheck.IsChecked = settings.Current.StartupEnabled;
 
-        HotkeyModeCombo.Items.Add("押すたびに開始/停止（トグル）");
-        HotkeyModeCombo.Items.Add("押している間だけ音声入力（押しっぱなし）");
+        HotkeyModeCombo.Items.Add("押すたびに開始・停止を切り替える");
+        HotkeyModeCombo.Items.Add("押している間だけ音声入力する");
         HotkeyModeCombo.SelectedIndex = settings.Current.HotkeyMode == HotkeyMode.PushToTalk ? 1 : 0;
 
         foreach (var sec in AppSettings.SilenceAutoStopChoices)
-            SilenceCombo.Items.Add(sec == 0 ? "自動停止しない" : $"{sec} 秒");
+            SilenceCombo.Items.Add(sec == 0 ? "自動では止めない" : $"{sec} 秒");
         SilenceCombo.SelectedIndex = Math.Max(0,
             Array.IndexOf(AppSettings.SilenceAutoStopChoices, settings.Current.SilenceAutoStopSeconds));
+
+        OverlayCombo.Items.Add("画面の下・中央");
+        OverlayCombo.Items.Add("画面の上・中央");
+        OverlayCombo.Items.Add("画面の右下");
+        OverlayCombo.Items.Add("表示しない");
+        OverlayCombo.SelectedIndex = settings.Current.OverlayPosition switch
+        {
+            OverlayPosition.TopCenter => 1,
+            OverlayPosition.BottomRight => 2,
+            OverlayPosition.Hidden => 3,
+            _ => 0,
+        };
 
         WidthCombo.Items.Add("認識結果のまま");
         WidthCombo.Items.Add("半角にそろえる（例: ３時 → 3時）");
@@ -89,7 +113,7 @@ public partial class SettingsWindow : Window
             _ => 0,
         };
 
-        NewlineCombo.Items.Add("Shift+Enter（推奨・大半のアプリで改行）");
+        NewlineCombo.Items.Add("Shift+Enter（おすすめ。ほとんどのアプリで改行になります）");
         NewlineCombo.Items.Add("Enter（Shift+Enter が効かないアプリ向け）");
         NewlineCombo.Items.Add("Alt+Enter（Excel のセル内改行）");
         NewlineCombo.SelectedIndex = settings.Current.NewlineMode switch
@@ -114,8 +138,8 @@ public partial class SettingsWindow : Window
             _ => 0,
         };
 
-        InputMethodCombo.Items.Add("直接キー入力（推奨）");
-        InputMethodCombo.Items.Add("クリップボード貼り付け");
+        InputMethodCombo.Items.Add("キー入力として送る（おすすめ）");
+        InputMethodCombo.Items.Add("貼り付けで入れる（クリップボードを使う）");
         InputMethodCombo.SelectedIndex = settings.Current.InputMethod == InputMethod.Clipboard ? 1 : 0;
 
         RemoveSpacesCheck.IsChecked = settings.Current.RemoveSpaces;
@@ -134,7 +158,7 @@ public partial class SettingsWindow : Window
         LocalRecognitionCheck.IsChecked = settings.Current.PreferLocalRecognition;
         LogRecognitionCheck.IsChecked = settings.Current.LogRecognitionText;
 
-        UpdateModeCombo.Items.Add("起動のたびに確認する（推奨）");
+        UpdateModeCombo.Items.Add("起動のたびに確認する（おすすめ）");
         UpdateModeCombo.Items.Add("起動時に確認する（1 日 1 回まで）");
         UpdateModeCombo.Items.Add("自動では確認しない（手動のみ）");
         UpdateModeCombo.SelectedIndex = settings.Current.UpdateCheckMode switch
@@ -144,17 +168,42 @@ public partial class SettingsWindow : Window
             _ => 0,
         };
         // どこへ通信するのかが利用者から見えるようにする
-        UpdateUrlText.Text = $"更新の確認先: {settings.Current.UpdateApiUrl}\n" +
-                             "この確認と、更新ファイルのダウンロード以外に、外部との通信は行いません。";
+        UpdateUrlText.Text = "VoiceDock が外部と通信するのは、次の 2 つだけです。使用状況などは送りません。\n" +
+                             "・音声の認識（ブラウザの音声認識機能。上の設定で、この PC の中での認識に切り替えられます）\n" +
+                             $"・新しい版の確認とダウンロード（確認先: {settings.Current.UpdateApiUrl}）";
 
-        var version = typeof(SettingsWindow).Assembly.GetName().Version;
-        VersionText.Text = $"VoiceDock v{version?.ToString(3) ?? "?"} — Web Speech API 音声入力ツール";
+        DataFolderText.Text = AppPaths.Root + (AppPaths.IsPortable
+            ? "\nVoiceDock.exe と、この data フォルダーをまとめて写せば、設定ごと別の PC へ引っ越せます。"
+            : "\nVoiceDock.exe の置き場所に書き込めないため、こちらに保存しています。");
+
+        VersionText.Text = $"VoiceDock v{UpdateService.CurrentVersion}";
+        UpdateUndoOptions();
 
         _initializing = false;
 
         // トレイメニューから認識言語を切り替えた場合も、開いている画面の表示を合わせる
         _settings.Changed += OnSettingsChanged;
         Closed += (_, _) => _settings.Changed -= OnSettingsChanged;
+    }
+
+    private void Close_Click(object sender, RoutedEventArgs e) => Close();
+
+    private void OpenDataFolder_Click(object sender, RoutedEventArgs e) => _openDataFolder();
+
+    /// <summary>取り消しをオフにしている間は、関連する項目を選べないようにする。</summary>
+    private void UpdateUndoOptions() => UndoOptions.IsEnabled = UndoCheck.IsChecked == true;
+
+    private void OverlayCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_initializing) return;
+        var position = OverlayCombo.SelectedIndex switch
+        {
+            1 => OverlayPosition.TopCenter,
+            2 => OverlayPosition.BottomRight,
+            3 => OverlayPosition.Hidden,
+            _ => OverlayPosition.BottomCenter,
+        };
+        _settings.Update(s => s.OverlayPosition = position);
     }
 
     private void OnSettingsChanged(AppSettings s) => Dispatcher.BeginInvoke(() =>
@@ -197,6 +246,7 @@ public partial class SettingsWindow : Window
     private void Option_Changed(object sender, RoutedEventArgs e)
     {
         if (_initializing) return;
+        UpdateUndoOptions();
         _settings.Update(s =>
         {
             s.RemoveSpaces = RemoveSpacesCheck.IsChecked == true;
@@ -255,36 +305,6 @@ public partial class SettingsWindow : Window
         _settings.Update(s => s.HotkeyMode = mode);
     }
 
-    private void UndoHotkeyBox_PreviewKeyDown(object sender, KeyEventArgs e)
-    {
-        e.Handled = true;
-
-        var key = ResolveKey(e);
-        if (key is Key.LeftCtrl or Key.RightCtrl or Key.LeftAlt or Key.RightAlt
-            or Key.LeftShift or Key.RightShift or Key.LWin or Key.RWin)
-            return;
-
-        var spec = new HotkeySpec(Keyboard.Modifiers, key);
-        if (spec.Modifiers == ModifierKeys.None)
-        {
-            UndoHotkeyWarning.Text = "修飾キー（Ctrl / Alt / Shift）との組み合わせを指定してください。";
-            UndoHotkeyWarning.Visibility = Visibility.Visible;
-            return;
-        }
-
-        if (_applyUndoHotkey(spec))
-        {
-            UndoHotkeyBox.Text = spec.ToString();
-            UndoHotkeyWarning.Visibility = Visibility.Collapsed;
-            _settings.Update(s => s.UndoHotkey = spec.ToString());
-        }
-        else
-        {
-            UndoHotkeyWarning.Text = $"{spec} は他のアプリと衝突しているため登録できませんでした。別のキーを指定してください。";
-            UndoHotkeyWarning.Visibility = Visibility.Visible;
-        }
-    }
-
     private void OnMicrophonesReported(IReadOnlyList<MicrophoneDevice> list) =>
         Dispatcher.BeginInvoke(() => BuildMicList(list));
 
@@ -310,6 +330,7 @@ public partial class SettingsWindow : Window
             }
 
             int index = 0;
+            bool missing = false;
             if (s.MicrophoneDeviceId.Length > 0)
             {
                 index = _micChoices.FindIndex(d => d.Id == s.MicrophoneDeviceId);
@@ -328,9 +349,12 @@ public partial class SettingsWindow : Window
                     _micChoices.Add(new MicrophoneDevice(s.MicrophoneDeviceId, s.MicrophoneLabel));
                     MicCombo.Items.Add(devices.Count > 0 ? $"{label}（見つかりません）" : label);
                     index = _micChoices.Count - 1;
+                    missing = devices.Count > 0;
                 }
             }
             MicCombo.SelectedIndex = index;
+            MicWarning.Text = "選んでいたマイクが見つかりません。つなぎ直すか、別のマイクを選んでください（それまでは Windows の既定のマイクで認識します）。";
+            MicWarning.Visibility = missing ? Visibility.Visible : Visibility.Collapsed;
         }
         finally
         {
@@ -343,6 +367,7 @@ public partial class SettingsWindow : Window
         if (_initializing || _buildingMicList || MicCombo.SelectedIndex < 0) return;
         var chosen = _micChoices[MicCombo.SelectedIndex];
         if (chosen.Id == _settings.Current.MicrophoneDeviceId) return;
+        MicWarning.Visibility = Visibility.Collapsed;
         _settings.Update(s =>
         {
             s.MicrophoneDeviceId = chosen.Id;
@@ -422,40 +447,89 @@ public partial class SettingsWindow : Window
 
         // すべてを置き換えるため取り消しがきかない。何が入っているかを見せてから確認する
         var created = contents.CreatedAt is { } t ? t.ToString("yyyy/MM/dd HH:mm") : "不明";
-        var answer = MessageBox.Show(this,
+        bool ok = MessageDialog.Show(this, "バックアップから復元",
             "このバックアップで、今の設定・辞書・定型文をすべて置き換えます。\n\n" +
             $"作成日時: {created}\n" +
             $"作成したバージョン: {contents.AppVersion ?? "不明"}\n" +
             $"辞書: {contents.Dictionary.Count} 件　定型文: {contents.Snippets.Count} 件\n\n" +
-            "この操作は取り消せません。続けますか？",
-            "バックアップから復元", MessageBoxButton.OKCancel, MessageBoxImage.Warning, MessageBoxResult.Cancel);
-        if (answer != MessageBoxResult.OK) return;
+            "この操作は取り消せません。",
+            MessageDialogKind.Danger, "置き換える", "キャンセル");
+        if (!ok) return;
 
         if (!_restoreBackup(contents)) return;
 
         ToastWindow.Show($"バックアップから復元しました（辞書 {contents.Dictionary.Count} 件・定型文 {contents.Snippets.Count} 件）。");
-        // この画面は復元前の設定を表示しているため、閉じて開き直してもらう
+        // この画面は復元前の設定を表示しているため、開き直して新しい内容を見せる
         Close();
+        _reopen();
     }
 
     private void Reset_Click(object sender, RoutedEventArgs e)
     {
-        var answer = MessageBox.Show(this,
-            "すべての設定を初期状態に戻します。辞書と定型文は削除されません。\n続けますか？",
-            "設定の初期化", MessageBoxButton.OKCancel, MessageBoxImage.Warning, MessageBoxResult.Cancel);
-        if (answer != MessageBoxResult.OK) return;
+        bool ok = MessageDialog.Show(this, "設定の初期化",
+            "すべての設定を初期状態に戻します（ホットキーやアプリ別の設定も戻ります）。\n辞書と定型文は消えません。",
+            MessageDialogKind.Danger, "初期状態に戻す", "キャンセル");
+        if (!ok) return;
 
         _settings.ResetToDefaults();
         ToastWindow.Show("設定を初期状態に戻しました。");
         Close();
+        _reopen();
     }
 
     private void OpenSnippets_Click(object sender, RoutedEventArgs e) => _openSnippets();
 
     private void OpenAppRules_Click(object sender, RoutedEventArgs e) => _openAppRules();
 
+    // ───────── ホットキーの変更 ─────────
+    //
+    // 欄をクリックするか「変更…」を押すと、キーの入力を待つ。待っている間だけキーを受け取るので、
+    // ふだんは Tab や Esc がそのまま働く（以前は欄にフォーカスがあるだけで、すべてのキーを飲み込んでいた）。
+    // 待っている間は、いま登録しているホットキーを止める（止めないと、今のホットキーを押し直したときに
+    // 音声入力が始まってしまい、同じキーを選び直すこともできない）。
+
+    private void HotkeyChange_Click(object sender, RoutedEventArgs e) => BeginCapture(HotkeyBox);
+
+    private void UndoHotkeyChange_Click(object sender, RoutedEventArgs e) => BeginCapture(UndoHotkeyBox);
+
+    private void HotkeyBox_PreviewMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+    {
+        if (sender is not TextBox box) return;
+        e.Handled = true;
+        BeginCapture(box);
+    }
+
+    private void HotkeyBox_LostKeyboardFocus(object sender, KeyboardFocusChangedEventArgs e)
+    {
+        if (ReferenceEquals(sender, _capturing)) EndCapture();
+    }
+
+    private void BeginCapture(TextBox box)
+    {
+        if (ReferenceEquals(_capturing, box)) return;
+        EndCapture();
+        _capturing = box;
+        box.Text = "キーを押してください（Esc で取りやめ）";
+        WarningFor(box).Visibility = Visibility.Collapsed;
+        _setHotkeyCapture(true);
+        box.Focus();
+        Keyboard.Focus(box);
+    }
+
+    /// <summary>キーの入力待ちをやめ、欄の表示を今の設定に戻す。</summary>
+    private void EndCapture()
+    {
+        if (_capturing is not { } box) return;
+        _capturing = null;
+        box.Text = ReferenceEquals(box, HotkeyBox) ? _settings.Current.Hotkey : _settings.Current.UndoHotkey;
+        _setHotkeyCapture(false);
+    }
+
+    private TextBlock WarningFor(TextBox box) => ReferenceEquals(box, HotkeyBox) ? HotkeyWarning : UndoHotkeyWarning;
+
     private void HotkeyBox_PreviewKeyDown(object sender, KeyEventArgs e)
     {
+        if (sender is not TextBox box || !ReferenceEquals(box, _capturing)) return;
         e.Handled = true;
 
         var key = ResolveKey(e);
@@ -464,24 +538,73 @@ public partial class SettingsWindow : Window
             or Key.LeftShift or Key.RightShift or Key.LWin or Key.RWin)
             return;
 
-        var spec = new HotkeySpec(Keyboard.Modifiers, key);
-        if (spec.Modifiers == ModifierKeys.None)
+        bool isUndo = ReferenceEquals(box, UndoHotkeyBox);
+        var changeButton = isUndo ? UndoHotkeyChangeButton : HotkeyChangeButton;
+        if (key == Key.Escape && Keyboard.Modifiers == ModifierKeys.None)
         {
-            ShowHotkeyWarning("修飾キー（Ctrl / Alt / Shift）との組み合わせを指定してください。");
+            EndCapture();
+            changeButton.Focus();
             return;
         }
 
-        if (_applyHotkey(spec))
+        var spec = new HotkeySpec(Keyboard.Modifiers, key);
+        var warning = WarningFor(box);
+        var other = isUndo ? _settings.Current.Hotkey : (_settings.Current.UndoEnabled ? _settings.Current.UndoHotkey : "");
+        if (WhyUnusable(spec, other, isUndo) is { } reason)
         {
-            HotkeyBox.Text = spec.ToString();
-            HotkeyWarning.Visibility = Visibility.Collapsed;
-            _settings.Update(s => s.Hotkey = spec.ToString());
+            warning.Text = reason;
+            warning.Visibility = Visibility.Visible;
+            return;
+        }
+
+        // いったん入力待ちをやめて（止めていたホットキーが戻る）、新しいキーを登録する
+        EndCapture();
+        bool applied = isUndo ? _applyUndoHotkey(spec) : _applyHotkey(spec);
+        if (applied)
+        {
+            _settings.Update(s =>
+            {
+                if (isUndo) s.UndoHotkey = spec.ToString();
+                else s.Hotkey = spec.ToString();
+            });
+            box.Text = spec.ToString();
+            warning.Visibility = Visibility.Collapsed;
         }
         else
         {
             // 他アプリとの衝突。元のホットキーを復元登録済み（App 側）なので表示は変えない
-            ShowHotkeyWarning($"{spec} は他のアプリと衝突しているため登録できませんでした。別のキーを指定してください。");
+            warning.Text = $"{spec} は、他のアプリが使っているため登録できませんでした。別のキーを指定してください。";
+            warning.Visibility = Visibility.Visible;
         }
+        changeButton.Focus();
+    }
+
+    /// <summary>ホットキーに使えない組み合わせなら、その理由を返す。使えるなら null。</summary>
+    private static string? WhyUnusable(HotkeySpec spec, string otherHotkey, bool isUndo)
+    {
+        bool functionKey = spec.Key is >= Key.F1 and <= Key.F24 or Key.Pause or Key.Scroll;
+        if (spec.Modifiers == ModifierKeys.None && !functionKey)
+            return "Ctrl・Alt・Shift・Win のどれかと組み合わせてください（F1〜F12 などは単独でも使えます）。";
+        if (spec.Modifiers == ModifierKeys.Shift && !functionKey)
+            return "Shift だけとの組み合わせは、文字の入力とぶつかるため使えません。Ctrl や Alt と組み合わせてください。";
+
+        bool reserved = (spec.Modifiers, spec.Key) switch
+        {
+            (ModifierKeys.Alt, Key.F4 or Key.Tab or Key.Space or Key.Escape) => true,
+            (ModifierKeys.Control, Key.C or Key.V or Key.X or Key.Z or Key.Y or Key.A or Key.S or Key.Escape) => true,
+            (ModifierKeys.Control | ModifierKeys.Shift, Key.Escape) => true,
+            (ModifierKeys.Control | ModifierKeys.Alt, Key.Delete) => true,
+            (ModifierKeys.Windows, Key.L or Key.D or Key.E or Key.R or Key.Tab) => true,
+            _ => false,
+        };
+        if (reserved)
+            return $"{spec} は、コピーやウィンドウを閉じるなどの大事な操作に使われているため選べません。";
+
+        if (HotkeySpec.TryParse(otherHotkey, out var other) && other == spec)
+            return isUndo
+                ? "音声入力のホットキーと同じキーは使えません。"
+                : "取り消しのホットキーと同じキーは使えません。";
+        return null;
     }
 
     /// <summary>
@@ -495,12 +618,6 @@ public partial class SettingsWindow : Window
         Key.ImeProcessed => e.ImeProcessedKey,
         _ => e.Key,
     };
-
-    private void ShowHotkeyWarning(string message)
-    {
-        HotkeyWarning.Text = message;
-        HotkeyWarning.Visibility = Visibility.Visible;
-    }
 
     private void StartupCheck_Changed(object sender, RoutedEventArgs e)
     {

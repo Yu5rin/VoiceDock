@@ -49,8 +49,12 @@ public sealed class BrowserLauncher : IDisposable
     {
         get
         {
-            TrimRelaunchHistory();
-            return _relaunchTimes.Count >= MaxRelaunchesPerWindow;
+            // 再起動は別スレッドで行うため、履歴は鍵をかけて触る
+            lock (_relaunchTimes)
+            {
+                TrimRelaunchHistory();
+                return _relaunchTimes.Count >= MaxRelaunchesPerWindow;
+            }
         }
     }
 
@@ -62,7 +66,7 @@ public sealed class BrowserLauncher : IDisposable
     }
 
     /// <summary>設定変更などで、諦めた状態からやり直せるようにする。</summary>
-    public void ResetRelaunchAttempts() => _relaunchTimes.Clear();
+    public void ResetRelaunchAttempts() { lock (_relaunchTimes) _relaunchTimes.Clear(); }
 
     /// <summary>
     /// 使用ブラウザの設定を変えたときなどに、今のブラウザを終了して起動し直す。
@@ -70,7 +74,7 @@ public sealed class BrowserLauncher : IDisposable
     /// </summary>
     public bool Restart()
     {
-        _relaunchTimes.Clear();
+        ResetRelaunchAttempts();
         if (_urlFactory == null) return false;
         lock (_launchLock)
         {
@@ -107,9 +111,14 @@ public sealed class BrowserLauncher : IDisposable
     {
         if (_urlFactory == null || GaveUp) return;
         if (Interlocked.Exchange(ref _relaunching, 1) != 0) return;
-        _relaunchTimes.Enqueue(DateTime.UtcNow);
+        int attempt;
+        lock (_relaunchTimes)
+        {
+            _relaunchTimes.Enqueue(DateTime.UtcNow);
+            attempt = _relaunchTimes.Count;
+        }
         _log.Warn($"認識用ブラウザが応答しないため再起動します" +
-                  $"（直近 {RelaunchWindow.TotalMinutes:0} 分で {_relaunchTimes.Count}/{MaxRelaunchesPerWindow} 回目）");
+                  $"（直近 {RelaunchWindow.TotalMinutes:0} 分で {attempt}/{MaxRelaunchesPerWindow} 回目）");
         _ = Task.Run(() =>
         {
             try
@@ -307,7 +316,15 @@ public sealed class BrowserLauncher : IDisposable
         }
         LaunchedBrowserName = name;
 
-        Directory.CreateDirectory(AppPaths.BrowserProfileDir);
+        try
+        {
+            Directory.CreateDirectory(AppPaths.BrowserProfileDir);
+        }
+        catch (Exception ex)
+        {
+            _log.Error($"認識用ブラウザのプロファイルを置くフォルダーを作れませんでした: {ex.Message}");
+            return false;
+        }
 
         var args = new List<string>
         {

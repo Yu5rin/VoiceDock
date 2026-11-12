@@ -36,7 +36,9 @@ public partial class DiagnosticsWindow : Window
         HotkeyManager? hotkey, RecordingController controller, Action showLog)
     {
         InitializeComponent();
-        AppTheme.ApplyToWindow(this);
+        WindowBehavior.Attach(this, "Diagnostics", closeOnEscape: false);   // Esc は「閉じる」ボタン（IsCancel）が受ける
+        // 設定を変えて戻ってきたときなどに、古い状態を見せたままにしない
+        Activated += (_, _) => RefreshStatus();
         _settings = settings;
         _bridge = bridge;
         _browser = browser;
@@ -62,39 +64,39 @@ public partial class DiagnosticsWindow : Window
 
         bool connected = _bridge?.IsConnected == true;
         AddRow(StatusPanel, _statusReport, "認識エンジン",
-            connected ? "接続しています" : "つながっていません（起動直後なら数秒待って［最新の状態に更新］。続く場合はトレイの「認識エンジンを再起動」）",
+            connected ? "つながっています" : "つながっていません（起動直後なら数秒待って［最新の状態にする］。続くときは、トレイメニューの「トラブル解決 → 認識エンジンを再起動」）",
             connected);
         AddRow(StatusPanel, _statusReport, "認識用ブラウザ", _browser?.LaunchedBrowserName ?? "起動していません",
             _browser?.LaunchedBrowserName != null ? null : false);
 
         var mic = _bridge?.CurrentMicrophone;
-        AddRow(StatusPanel, _statusReport, "マイク",
-            mic ?? "まだ分かりません（音声入力を一度行うと表示されます。Windows の既定の録音デバイスが使われます）", null);
+        AddRow(StatusPanel, _statusReport, "最後に使ったマイク",
+            mic ?? "まだ分かりません（音声入力を一度行うと表示されます）", null);
 
-        AddRow(StatusPanel, _statusReport, "選んでいるマイク",
+        AddRow(StatusPanel, _statusReport, "設定で選んだマイク",
             s.MicrophoneDeviceId.Length > 0 ? s.MicrophoneLabel : "Windows の既定のマイク", null);
         AddRow(StatusPanel, _statusReport, "認識言語",
-            RecognitionLanguages.LabelOf(s.RecognitionLanguage) + (s.PreferLocalRecognition ? "（端末内認識を優先）" : ""), null);
+            RecognitionLanguages.LabelOf(s.RecognitionLanguage) + (s.PreferLocalRecognition ? "（できるだけ、この PC の中で認識）" : ""), null);
 
-        var mode = s.HotkeyMode == HotkeyMode.PushToTalk ? "押している間だけ" : "押すたびに開始/停止";
+        var mode = s.HotkeyMode == HotkeyMode.PushToTalk ? "押している間だけ" : "押すたびに開始・停止";
         bool recordOk = _hotkey?.IsRecordRegistered == true;
         AddRow(StatusPanel, _statusReport, "音声入力のホットキー",
-            $"{s.Hotkey}（{mode}）— " + (recordOk ? "使えます" : "他のアプリと衝突して登録できていません。設定で別のキーにしてください"),
+            $"{s.Hotkey}（{mode}）— " + (recordOk ? "使えます" : "他のアプリが使っているため、登録できていません。設定で別のキーにしてください"),
             recordOk);
 
         if (s.UndoEnabled)
         {
             bool undoOk = _hotkey?.IsUndoRegistered == true;
             AddRow(StatusPanel, _statusReport, "取り消しのホットキー",
-                $"{s.UndoHotkey} — " + (undoOk ? "使えます" : "他のアプリと衝突して登録できていません"), undoOk);
+                $"{s.UndoHotkey} — " + (undoOk ? "使えます" : "他のアプリが使っているため、登録できていません。設定で別のキーにしてください"), undoOk);
         }
         else
         {
-            AddRow(StatusPanel, _statusReport, "取り消しのホットキー", "取り消しは無効です", null);
+            AddRow(StatusPanel, _statusReport, "取り消しのホットキー", "取り消しはオフにしています", null);
         }
 
-        AddRow(StatusPanel, _statusReport, "既定の入力方式", MethodLabel(s.InputMethod), null);
-        AddRow(StatusPanel, _statusReport, "既定の改行", NewlineLabel(s.NewlineMode), null);
+        AddRow(StatusPanel, _statusReport, "文字の入れ方", MethodLabel(s.InputMethod), null);
+        AddRow(StatusPanel, _statusReport, "改行のキー", NewlineLabel(s.NewlineMode), null);
         int appRules = s.AppInputMethods.Keys.Concat(s.AppNewlineModes.Keys).Distinct(StringComparer.OrdinalIgnoreCase).Count();
         AddRow(StatusPanel, _statusReport, "アプリ別の設定", appRules == 0 ? "なし" : $"{appRules} 件", null);
         AddRow(StatusPanel, _statusReport, "音声入力", _controller.IsListening ? "入力中" : "停止中", null);
@@ -126,12 +128,12 @@ public partial class DiagnosticsWindow : Window
             hasFocus ? "見つかりました" : "見つかりません（文字を入力できる欄をクリックしてから試してください）", hasFocus);
 
         bool methodOverride = app.Length > 0 && s.AppInputMethods.ContainsKey(app);
-        AddRow(ProbePanel, _probeReport, "入力方式",
-            MethodLabel(_controller.ResolveInputMethod(app)) + (methodOverride ? "（アプリ別の設定）" : "（既定）"), null);
+        AddRow(ProbePanel, _probeReport, "文字の入れ方",
+            MethodLabel(_controller.ResolveInputMethod(app)) + (methodOverride ? "（アプリ別の設定）" : "（共通の設定）"), null);
 
         bool newlineOverride = app.Length > 0 && s.AppNewlineModes.ContainsKey(app);
-        AddRow(ProbePanel, _probeReport, "改行",
-            NewlineLabel(_controller.ResolveNewlineMode(app)) + (newlineOverride ? "（アプリ別の設定）" : "（既定）"), null);
+        AddRow(ProbePanel, _probeReport, "改行のキー",
+            NewlineLabel(_controller.ResolveNewlineMode(app)) + (newlineOverride ? "（アプリ別の設定）" : "（共通の設定）"), null);
 
         var ime = TextInjector.GetForegroundImeOpen();
         AddRow(ProbePanel, _probeReport, "IME",
@@ -165,7 +167,7 @@ public partial class DiagnosticsWindow : Window
         {
             TestResult.Foreground = (Brush)FindResource("FgBrush");
             TestResult.Text = $"「{app}」に入力しました。「{TestText}」がそのまま入ったか確認してください。" +
-                              "文字が欠ける・入れ替わる場合は、そのアプリの入力方式を「クリップボード貼り付け」にしてみてください。";
+                              "文字が欠ける・入れ替わるときは、「アプリ別の設定」で、そのアプリの文字の入れ方を「貼り付けで入れる」にしてみてください。";
         }
         else
         {
@@ -228,13 +230,19 @@ public partial class DiagnosticsWindow : Window
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
 
         var mark = ok switch { true => "✓ ", false => "⚠ ", null => "" };
-        var labelBlock = new TextBlock { Text = label, Foreground = (Brush)FindResource("SubFgBrush") };
-        var valueBlock = new TextBlock
+        var labelBlock = new TextBlock { Text = label, Foreground = (Brush)FindResource("SubFgBrush"), TextWrapping = TextWrapping.Wrap };
+        var valueBlock = new TextBlock { TextWrapping = TextWrapping.Wrap };
+        if (mark.Length > 0)
         {
-            Text = mark + value,
-            TextWrapping = TextWrapping.Wrap,
+            valueBlock.Inlines.Add(new System.Windows.Documents.Run(mark)
+            {
+                Foreground = (Brush)FindResource(ok == true ? "SuccessBrush" : "WarnBrush"),
+            });
+        }
+        valueBlock.Inlines.Add(new System.Windows.Documents.Run(value)
+        {
             Foreground = (Brush)FindResource(ok == false ? "WarnBrush" : "FgBrush"),
-        };
+        });
         Grid.SetColumn(valueBlock, 1);
         grid.Children.Add(labelBlock);
         grid.Children.Add(valueBlock);
@@ -244,7 +252,7 @@ public partial class DiagnosticsWindow : Window
     }
 
     private static string MethodLabel(InputMethod method) =>
-        method == InputMethod.Clipboard ? "クリップボード貼り付け" : "直接キー入力";
+        method == InputMethod.Clipboard ? "貼り付けで入れる（クリップボードを使う）" : "キー入力として送る";
 
     private static string NewlineLabel(NewlineMode mode) => mode switch
     {
@@ -282,6 +290,8 @@ public partial class DiagnosticsWindow : Window
     }
 
     private void ShowLog_Click(object sender, RoutedEventArgs e) => _showLog();
+
+    private void Close_Click(object sender, RoutedEventArgs e) => Close();
 
     private void Window_Closed(object sender, EventArgs e) => _countdown?.Stop();
 }

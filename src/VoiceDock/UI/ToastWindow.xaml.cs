@@ -30,12 +30,16 @@ public partial class ToastWindow : Window
         InitializeComponent();
         _kind = kind;
         MessageText.Text = message;
-        AccentBar.Background = kind switch
+        AccentBar.Background = (Brush)FindResource(kind switch
         {
-            ToastKind.Error => new SolidColorBrush(Color.FromRgb(0xE5, 0x48, 0x4D)),
-            ToastKind.Warning => new SolidColorBrush(Color.FromRgb(0xE5, 0xA3, 0x3B)),
-            _ => new SolidColorBrush(Color.FromRgb(0x9A, 0x9A, 0xA2)),
-        };
+            ToastKind.Error => "DangerBrush",
+            ToastKind.Warning => "WarnBrush",
+            _ => "AccentBrush",
+        });
+
+        // 読んでいる途中で消えないよう、マウスを載せている間は消すのを待つ
+        MouseEnter += (_, _) => _timer?.Stop();
+        MouseLeave += (_, _) => _timer?.Start();
 
         // 大事な知らせは、目を離している間に消えてしまわないようにする
         if (kind == ToastKind.Error)
@@ -75,6 +79,14 @@ public partial class ToastWindow : Window
         if (dispatcher == null) return;
         dispatcher.BeginInvoke(() =>
         {
+            // 同じ知らせがもう出ているなら、重ねて出さずに表示時間を延ばす
+            // （同じエラーが続いたときに、同じ通知で画面が埋まらないようにする）
+            var same = Visible.FirstOrDefault(t => t._kind == kind && t.MessageText.Text == message);
+            if (same != null)
+            {
+                if (same._timer is { } running) { running.Stop(); running.Start(); }
+                return;
+            }
             var toast = new ToastWindow(message, kind, onClick, actionHint) { _hasAction = onClick != null };
             toast.ShowToast();
         });
@@ -82,6 +94,9 @@ public partial class ToastWindow : Window
 
     /// <summary>クリックで操作を行う通知かどうか。</summary>
     private bool _hasAction;
+
+    /// <summary>自動で消すためのタイマー（エラーの通知は自動で消さないので null）。</summary>
+    private DispatcherTimer? _timer;
 
     private void ShowToast()
     {
@@ -119,6 +134,7 @@ public partial class ToastWindow : Window
             timer.Stop();
             FadeOutAndClose();
         };
+        _timer = timer;
         timer.Start();
     }
 

@@ -19,7 +19,8 @@ public partial class OverlayWindow : Window
     private const double BarWidth = 3;
     private const double BarGap = 3;
 
-    private static readonly Brush BarBrush = new SolidColorBrush(Color.FromRgb(0xE5, 0x48, 0x4D));
+    /// <summary>表示する位置（設定で選ぶ）。Hidden のときは表示しない。</summary>
+    public Models.OverlayPosition Position { get; set; } = Models.OverlayPosition.BottomCenter;
 
     private readonly Rectangle[] _bars = new Rectangle[BarCount];
     private readonly double[] _levels = new double[BarCount];
@@ -39,7 +40,7 @@ public partial class OverlayWindow : Window
                 Height = 3,
                 RadiusX = 1.5,
                 RadiusY = 1.5,
-                Fill = BarBrush,
+                Fill = (Brush)FindResource("RecordBrush"),
             };
             _bars[i] = bar;
             WaveCanvas.Children.Add(bar);
@@ -75,7 +76,7 @@ public partial class OverlayWindow : Window
 
     public void ShowOverlay()
     {
-        if (_visible) return;
+        if (_visible || Position == Models.OverlayPosition.Hidden) return;
         _visible = true;
 
         PositionToCursorMonitor();
@@ -144,8 +145,13 @@ public partial class OverlayWindow : Window
         double scale = GetScaleForPoint(anchor.X, anchor.Y);
         int widthPx = (int)Math.Round(Width * scale);
         int heightPx = (int)Math.Round(Height * scale);
-        int x = area.Left + (area.Width - widthPx) / 2;
-        int y = area.Bottom - heightPx - (int)Math.Round(24 * scale);
+        int margin = (int)Math.Round(24 * scale);
+        int x = Position == Models.OverlayPosition.BottomRight
+            ? area.Right - widthPx - margin
+            : area.Left + (area.Width - widthPx) / 2;
+        int y = Position == Models.OverlayPosition.TopCenter
+            ? area.Top + margin
+            : area.Bottom - heightPx - margin;
 
         var hwnd = new WindowInteropHelper(this).EnsureHandle();
         SetWindowPos(hwnd, IntPtr.Zero, x, y, widthPx, heightPx, SWP_NOZORDER | SWP_NOACTIVATE);

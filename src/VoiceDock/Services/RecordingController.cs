@@ -171,6 +171,7 @@ public sealed class RecordingController : IDisposable
 
         _bridge.FinalText += OnFinalText;
         _bridge.PartialText += _overlay.SetPartialText;
+        _bridge.PartialText += OnPartialText;
         _bridge.LevelChanged += _overlay.UpdateLevel;
         _bridge.RecognitionError += OnRecognitionError;
         _bridge.RecognitionModeReported += OnRecognitionModeReported;
@@ -217,12 +218,25 @@ public sealed class RecordingController : IDisposable
             return;
         }
 
+        // ごく短い間に続けて届いた分は 1 回として扱う。キーボードやほかの常駐ソフトの都合で
+        // 同じ押下が 2 回届くと、始めた直後に止まってしまう（実機ログ 2026-11-12）
+        long now = Environment.TickCount64;
+        if (now - _lastToggleTick < 300)
+        {
+            _log.Info("直前のホットキーと間隔が短すぎるため無視しました");
+            return;
+        }
+        _lastToggleTick = now;
+
         lock (_sync)
         {
             if (_listening) StopListening("ホットキー");
             else StartListening();
         }
     }
+
+    /// <summary>最後にホットキーで開始・停止を切り替えた時刻。</summary>
+    private long _lastToggleTick = -1000;
 
     /// <summary>トレイメニュー等からの開始/停止。UI スレッドで呼ぶこと。</summary>
     public void ToggleFromMenu()
@@ -295,7 +309,13 @@ public sealed class RecordingController : IDisposable
         {
             lock (_sync)
             {
-                if (!_listening) return;
+                if (!_listening)
+                {
+                    // 切れている間に止めた場合、「止める」はページへ届いていない。伝え直さないと、
+                    // こちらは停止の表示なのに、ページはマイクを開いたまま認識を続けてしまう
+                    _ = _bridge.StopRecognitionAsync();
+                    return;
+                }
                 _log.Info("認識エンジンとつながり直したため、音声入力を続けます");
                 SendStart();
             }
@@ -316,6 +336,23 @@ public sealed class RecordingController : IDisposable
         if (_settings.Current.SoundFeedback) SoundFeedback.PlayStop();
         _log.Info($"音声入力を停止しました ({reason})");
         ListeningChanged?.Invoke(false);
+    }
+
+    /// <summary>無音の自動停止を、認識途中の文字で延ばした最後の時刻（延ばしすぎないよう 1 秒に 1 回まで）。</summary>
+    private long _silenceExtendedAtTick;
+
+    /// <summary>
+    /// 認識途中の文字が届いている間は、話している最中とみなして無音の自動停止を延ばす。
+    /// 確定した文字は話の切れ目にしか届かないため、確定だけで判断すると、切れ目なく話し続けたときに
+    /// 「無音」として止めてしまう。
+    /// </summary>
+    private void OnPartialText(string text)
+    {
+        if (text.Length == 0) return;
+        long now = Environment.TickCount64;
+        if (now - Interlocked.Read(ref _silenceExtendedAtTick) < 1000) return;
+        Interlocked.Exchange(ref _silenceExtendedAtTick, now);
+        ResetSilenceTimer();
     }
 
     private void OnFinalText(string raw, bool rising)
@@ -483,8 +520,10 @@ public sealed class RecordingController : IDisposable
 
         var method = ResolveInputMethod(app);
 
-        // 改行やタブなどの操作系はクリップボード貼り付けに向かないため直接入力する
-        bool ok = method == InputMethod.Clipboard && !isCommand
+        // 改行やタブだけの操作はクリップボード貼り付けに向かないため直接入力する。
+        // 定型文や記号は、直接入力を受け付けないアプリでも入るよう、選んだ入力方式に従う
+        bool keysOnly = text.All(c => c is '\n' or '\r' or '\t');
+        bool ok = method == InputMethod.Clipboard && !keysOnly
             ? TextInjector.SendViaClipboard(text)
             : TextInjector.SendText(text, ResolveNewlineMode(app));
 
@@ -552,10 +591,17 @@ public sealed class RecordingController : IDisposable
         return s.InputMethod;
     }
 
+    /// <summary>取り消せる入力が残っているか（トレイメニューの表示用）。</summary>
+    public bool CanUndo => _settings.Current.UndoEnabled && _lastInjectedLength > 0;
+
     /// <summary>直前に入力したテキストを取り消す（入力した文字数ぶん BackSpace を送る）。</summary>
-    public void UndoLastInjection(string reason)
+    /// <param name="reactivateTarget">
+    /// トレイメニューから呼ぶときは true。メニューを開いた時点で入力先のアプリは前面でなくなっているため、
+    /// 入力したウィンドウを前面に戻してから取り消す。
+    /// </param>
+    public void UndoLastInjection(string reason, bool reactivateTarget = false)
     {
-        _dispatcher.BeginInvoke(DispatcherPriority.Send, new Action(() =>
+        _dispatcher.BeginInvoke(DispatcherPriority.Send, new Action(async () =>
         {
             if (!_settings.Current.UndoEnabled) return;
 
@@ -567,14 +613,31 @@ public sealed class RecordingController : IDisposable
                 return;
             }
 
-            // 入力した直後に別のアプリへ移っている場合、そこで BackSpace を送ると
+            if (reactivateTarget && TextInjector.GetForegroundWindowHandle() != _lastTargetWindow)
+            {
+                if (!TextInjector.TryActivateWindow(_lastTargetWindow))
+                {
+                    ToastWindow.Show("入力したウィンドウが見つからないため、取り消せませんでした。", ToastKind.Warning);
+                    return;
+                }
+                // 前面が切り替わり、入力欄にフォーカスが戻るのを待つ
+                await Task.Delay(250);
+                if (_lastInjectedLength != count) return;   // 待っている間に別の入力や取り消しがあった
+            }
+
+            // 入力した直後に別のアプリやウィンドウへ移っている場合、そこで BackSpace を送ると
             // 無関係な文字を消してしまう。入力先が変わっていたら取り消さない。
             var current = TextInjector.GetForegroundProcessName();
-            if (_lastInjectedApp.Length > 0 &&
-                !string.Equals(current, _lastInjectedApp, StringComparison.OrdinalIgnoreCase))
+            bool otherApp = _lastInjectedApp.Length > 0 &&
+                            !string.Equals(current, _lastInjectedApp, StringComparison.OrdinalIgnoreCase);
+            bool otherWindow = _lastTargetWindow != IntPtr.Zero &&
+                               TextInjector.GetForegroundWindowHandle() != _lastTargetWindow;
+            if (otherApp || otherWindow)
             {
                 _log.Info($"入力先が変わっているため取り消しを中止しました（入力時: {_lastInjectedApp} / 現在: {current}）");
-                ToastWindow.Show($"入力したアプリ（{_lastInjectedApp}）が前面にないため、取り消しを中止しました。", ToastKind.Warning);
+                ToastWindow.Show(otherApp
+                    ? $"入力したアプリ（{_lastInjectedApp}）が前面にないため、取り消しを中止しました。"
+                    : "入力したウィンドウが前面にないため、取り消しを中止しました。", ToastKind.Warning);
                 return;
             }
 
@@ -650,7 +713,27 @@ public sealed class RecordingController : IDisposable
                     _log.Error($"マイクの使用が許可されていません ({detail})");
                     SetErrorState();
                     if (ShouldNotify(detail))
-                        ToastWindow.Show("マイクの使用が許可されていません。ブラウザのマイク権限を確認してください。", ToastKind.Error);
+                        ToastWindow.Show("マイクの使用が許可されていません。Windows の設定（プライバシーとセキュリティ → マイク）と、" +
+                                         "認識用ブラウザのマイクの許可を確認してください。", ToastKind.Error);
+                    StopAfterFatalError("マイクを使えない");
+                    break;
+                case "audio-capture":
+                    // マイクが無い・無効になっている。「入力中」の表示のまま何も入らない状態にしない
+                    _log.Error("マイクから音声を取り込めません (audio-capture)");
+                    SetErrorState();
+                    if (ShouldNotify(detail))
+                        ToastWindow.Show("マイクが見つからないか、使えない状態です。マイクの接続と、Windows のサウンド設定を確認してください。",
+                            ToastKind.Error);
+                    StopAfterFatalError("マイクが見つからない");
+                    break;
+                case "language-not-supported":
+                    _log.Error("選んだ認識言語に、認識エンジンが対応していません");
+                    if (ShouldNotify(detail))
+                        ToastWindow.Show("選んだ認識言語に対応していません。設定で認識言語を変えてください。", ToastKind.Error);
+                    StopAfterFatalError("言語に対応していない");
+                    break;
+                case "aborted":
+                    // 止めた・マイクや言語を切り替えたときに出る。異常ではない
                     break;
                 case "speech-unsupported":
                     _log.Error("このブラウザは Web Speech API に対応していません");
@@ -668,6 +751,17 @@ public sealed class RecordingController : IDisposable
                     break;
             }
         });
+    }
+
+    /// <summary>続けても認識できないエラーのときは、音声入力を止める（エラーの表示は残す）。</summary>
+    private void StopAfterFatalError(string reason)
+    {
+        lock (_sync)
+        {
+            if (!_listening) return;
+            StopListening(reason);
+        }
+        _tray.SetState(TrayState.Error);
     }
 
     /// <summary>同じ内容の通知を短時間に繰り返さないための判定。</summary>
@@ -704,6 +798,8 @@ public sealed class RecordingController : IDisposable
         _dispatcher.BeginInvoke(() =>
         {
             StopSilenceTimer();
+            // 止めた後に届いた分でタイマーを作り直さない
+            lock (_sync) if (!_listening) return;
 
             // 0 秒は「自動停止しない」
             int seconds = _settings.Current.SilenceAutoStopSeconds;
@@ -714,7 +810,7 @@ public sealed class RecordingController : IDisposable
             {
                 lock (_sync)
                 {
-                    if (!_listening) return;
+                    if (!_listening) { StopSilenceTimer(); return; }
                     _log.Info($"{seconds} 秒間無音が続いたため音声入力を自動停止します");
                     StopListening("無音自動停止");
                 }

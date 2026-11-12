@@ -16,7 +16,7 @@ function load({ devices = [], failIds = [] } = {}) {
   class FakeWS { constructor() { this.readyState = 0; this.sent = []; sockets.push(this); }
     send(s) { if (this.readyState !== 1) throw new Error('closed'); this.sent.push(JSON.parse(s)); }
     close() { this.readyState = 3; } }
-  const opened = [];
+  const opened = [], tracks = [], srs = [];
   const track = (id) => ({ kind: 'audio', readyState: 'live', label: (devices.find(d => d.deviceId === id) || { label: '既定のマイク' }).label,
     stop() { this.readyState = 'ended'; } });
   const mediaDevices = {
@@ -24,15 +24,15 @@ function load({ devices = [], failIds = [] } = {}) {
     async getUserMedia(c) {
       const id = c.audio && c.audio.deviceId ? c.audio.deviceId.exact : '';
       if (id && (failIds.includes(id) || !devices.some(d => d.deviceId === id))) throw new Error('OverconstrainedError');
-      const t = track(id); opened.push(id || 'default');
+      const t = track(id); opened.push(id || 'default'); tracks.push(t);
       return { getAudioTracks: () => [t], getTracks: () => [t] };
     },
     async enumerateDevices() { return devices.map(d => ({ kind: 'audioinput', ...d })); },
   };
   const starts = [];
-  class FakeSR { constructor() { this.lang = ''; } start(t) { starts.push(t || null); this.onstart && this.onstart(); } stop() { this.onend && this.onend(); } }
+  class FakeSR { constructor() { this.lang = ''; srs.push(this); } start(t) { starts.push(t || null); this.onstart && this.onstart(); } stop() { this.onend && this.onend(); } }
   const sandbox = {
-    setTimeout: (f) => { timers.push(f); return 0; }, setInterval: () => 1, clearInterval() {},
+    setTimeout: (f) => { timers.push(f); return 0; }, setInterval: () => 1, clearInterval() {}, clearTimeout() {},
     WebSocket: FakeWS, window: { addEventListener() {}, webkitSpeechRecognition: FakeSR, AudioContext: class {
       constructor() { this.sampleRate = 48000; } createMediaStreamSource() { return { connect() {} }; }
       createAnalyser() { return { fftSize: 0, getFloatTimeDomainData() {} }; } close() {} } },
@@ -44,7 +44,7 @@ function load({ devices = [], failIds = [] } = {}) {
     '\nreturn { send, pending, onMsg: (m) => ws.onmessage({data: JSON.stringify(m)}), get ws(){ return ws; } };');
   const page = fn(...Object.values(sandbox));
   const ws = sockets[0]; ws.readyState = 1; ws.onopen();
-  return { page, ws, sockets, timers, starts, opened };
+  return { page, ws, sockets, timers, starts, opened, tracks, srs };
 }
 
 (async () => {
@@ -106,6 +106,46 @@ function load({ devices = [], failIds = [] } = {}) {
     for (let i = 0; i < 5; i++) await tick();
     const msg = ws.sent.find(m => m.type === 'devices');
     check('マイクの一覧を送る', msg && msg.list.length === 2 && msg.list[1].label === 'ヘッドセット' && msg.list[1].id === 'bbb');
+  }
+
+  // ── 止めた後にマイクを掴んだままにしない ──
+  {
+    // 短く押して離した: マイクを開いている途中で止められる
+    const { page, tracks } = load({ devices });
+    page.onMsg({ cmd: 'start', processLocally: false, lang: 'ja-JP', mic: '', micLabel: '' });
+    await tick();
+    page.onMsg({ cmd: 'stop' });
+    for (let i = 0; i < 8; i++) await tick();
+    check('開いている途中で止めたら、開けたマイクを閉じる', tracks.length > 0 && tracks.every(t => t.readyState === 'ended'));
+  }
+  {
+    const { page, tracks } = load({ devices });
+    page.onMsg({ cmd: 'start', processLocally: false, lang: 'ja-JP', mic: 'bbb', micLabel: 'ヘッドセット' });
+    page.onMsg({ cmd: 'stop' });
+    page.onMsg({ cmd: 'start', processLocally: false, lang: 'ja-JP', mic: 'bbb', micLabel: 'ヘッドセット' });
+    for (let i = 0; i < 12; i++) await tick();
+    check('止めてすぐ始めても、開いたままのマイクは 1 つだけ', tracks.filter(t => t.readyState === 'live').length === 1);
+    page.onMsg({ cmd: 'stop' });
+    for (let i = 0; i < 5; i++) await tick();
+    check('止めたらマイクをすべて閉じる', tracks.every(t => t.readyState === 'ended'));
+  }
+
+  // ── エラーが続くときの再開 ──
+  {
+    const { page, ws, starts, timers, srs } = load({ devices });
+    page.onMsg({ cmd: 'start', processLocally: false, lang: 'ja-JP', mic: '', micLabel: '' });
+    for (let i = 0; i < 5; i++) await tick();
+    const r = srs[0];
+    r.onend();
+    check('エラー無しで終わったら、すぐ再開する', starts.length === 2);
+    const before = timers.length;
+    r.onerror({ error: 'network' }); r.onend();
+    check('エラーで終わったら、すぐには再開しない', starts.length === 2 && timers.length === before + 1);
+    timers.pop()();
+    check('間隔を空けてから再開する', starts.length === 3);
+    r.onerror({ error: 'audio-capture' }); r.onend();
+    check('マイクが無いエラーでは再開しない', starts.length === 3 && timers.length === before);
+    check('エラーを本体へ知らせる', ws.sent.some(m => m.type === 'error' && m.detail === 'audio-capture'));
   }
 
   console.log(`OK ${ok} 件 / NG ${ng} 件`);

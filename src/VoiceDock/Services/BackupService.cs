@@ -113,6 +113,10 @@ public sealed class BackupService
     /// <summary>読み取った内容で、設定・辞書・定型文をすべて置き換える。</summary>
     public void Apply(BackupContents contents)
     {
+        // 辞書・定型文を置き換える前に、設定が使える内容かを確かめる
+        // （設定の適用で失敗すると、辞書だけ置き換わった半端な状態になるため）
+        if (contents.Settings == null)
+            throw new InvalidDataException("バックアップの設定部分を読み取れませんでした。");
         _dictionary.RestoreFrom(contents.Dictionary);
         _snippets.RestoreFrom(contents.Snippets);
         // 設定は最後に置き換える（ホットキーやブラウザの再設定がここから始まるため）

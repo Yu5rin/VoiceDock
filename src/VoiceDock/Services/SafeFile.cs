@@ -68,7 +68,7 @@ public static class SafeFile
             try
             {
                 if (!File.Exists(candidate)) continue;
-                var text = File.ReadAllText(candidate);
+                var text = ReadWithRetry(candidate);
                 if (validate != null && !validate(text)) continue;
 
                 if (candidate == backup)
@@ -87,6 +87,26 @@ public static class SafeFile
             }
         }
         return null;
+    }
+
+    /// <summary>
+    /// ファイルを読む。ウイルス対策や同期のソフトが一時的に掴んでいて読めないときは、少し待ってやり直す。
+    /// 一度読めなかっただけで 1 世代前の控えに切り替えると、直近の変更を失ってしまうため。
+    /// </summary>
+    private static string ReadWithRetry(string path)
+    {
+        const int attempts = 4;
+        for (int i = 1; ; i++)
+        {
+            try
+            {
+                return File.ReadAllText(path);
+            }
+            catch (Exception ex) when (i < attempts && ex is IOException or UnauthorizedAccessException)
+            {
+                Thread.Sleep(150 * i);
+            }
+        }
     }
 
     /// <summary>.bak の内容を本体へ書き戻す（失敗しても読み込み自体は成功扱いにする）。</summary>

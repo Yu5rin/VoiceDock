@@ -16,7 +16,10 @@ public partial class HistoryWindow : Window
     /// <summary>一覧の 1 行（入力先が空のときに分かる表示を添える）。</summary>
     public sealed record Row(DateTime Time, string Text, string App)
     {
-        public string AppLabel => App.Length > 0 ? App : "（入力されず）";
+        public string AppLabel => App.Length > 0 ? App : "（入らなかった）";
+
+        /// <summary>今日の分は時刻だけ、日をまたいだ分は日付も表示する（起動したまま何日も使うため）。</summary>
+        public string TimeLabel => Time.Date == DateTime.Today ? Time.ToString("HH:mm:ss") : Time.ToString("M/d HH:mm");
     }
 
     private readonly RecordingController _controller;
@@ -27,7 +30,7 @@ public partial class HistoryWindow : Window
     public HistoryWindow(RecordingController controller, Action<string> registerToDictionary)
     {
         InitializeComponent();
-        AppTheme.ApplyToWindow(this);
+        WindowBehavior.Attach(this, "History");
         _controller = controller;
         _registerToDictionary = registerToDictionary;
 
@@ -66,6 +69,7 @@ public partial class HistoryWindow : Window
         bool has = SelectedUndone != null;
         UndoneRegisterButton.IsEnabled = has;
         UndoneCopyButton.IsEnabled = has;
+        ClearButton.IsEnabled = _rows.Count > 0 || _undoneRows.Count > 0;
     }
 
     private void UndoneGrid_SelectionChanged(object sender, SelectionChangedEventArgs e) => UpdateUndoneState();
@@ -107,6 +111,7 @@ public partial class HistoryWindow : Window
         ReinjectButton.IsEnabled = has;
         CopyButton.IsEnabled = has;
         RegisterButton.IsEnabled = has;
+        ClearButton.IsEnabled = _rows.Count > 0 || _undoneRows.Count > 0;
         UpdateTarget();
     }
 
@@ -119,6 +124,21 @@ public partial class HistoryWindow : Window
     }
 
     private void Grid_SelectionChanged(object sender, SelectionChangedEventArgs e) => UpdateState();
+
+    /// <summary>Ctrl+C で文章だけをコピーする（表の標準のコピーだと、時刻や入力先も一緒に入ってしまう）。</summary>
+    private void Grid_PreviewKeyDown(object sender, KeyEventArgs e)
+    {
+        if (e.Key != Key.C || Keyboard.Modifiers != ModifierKeys.Control) return;
+        e.Handled = true;
+        Copy_Click(sender, e);
+    }
+
+    private void UndoneGrid_PreviewKeyDown(object sender, KeyEventArgs e)
+    {
+        if (e.Key != Key.C || Keyboard.Modifiers != ModifierKeys.Control) return;
+        e.Handled = true;
+        UndoneCopy_Click(sender, e);
+    }
 
     private void Grid_MouseDoubleClick(object sender, MouseButtonEventArgs e)
     {
@@ -134,7 +154,7 @@ public partial class HistoryWindow : Window
         if (Selected is not { } row) return;
         if (!await _controller.ReinjectAsync(row.Text))
         {
-            ToastWindow.Show("入力先のアプリが見つかりません。［コピー］して貼り付けてください。", ToastKind.Warning);
+            ToastWindow.Show("入力先のウィンドウが見つかりません（閉じられたか、まだ一度も入力していません）。［コピー］して貼り付けてください。", ToastKind.Warning);
         }
     }
 
@@ -164,9 +184,10 @@ public partial class HistoryWindow : Window
     private void Clear_Click(object sender, RoutedEventArgs e)
     {
         if (_rows.Count == 0 && _undoneRows.Count == 0) return;
-        var answer = MessageBox.Show(this, "認識履歴と、よく取り消す文章の集計をすべて消去します。よろしいですか？",
-            "認識履歴", MessageBoxButton.OKCancel, MessageBoxImage.Question, MessageBoxResult.Cancel);
-        if (answer == MessageBoxResult.OK) _controller.ClearHistory();
+        if (MessageDialog.Show(this, "履歴をすべて消す",
+                "認識履歴と、よく取り消す文章の集計をすべて消します。この操作は取り消せません。",
+                MessageDialogKind.Danger, "すべて消す", "キャンセル"))
+            _controller.ClearHistory();
     }
 
     private void Window_Closed(object sender, EventArgs e)

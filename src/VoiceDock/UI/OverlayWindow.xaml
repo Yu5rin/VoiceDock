@@ -17,9 +17,9 @@
 
             <!-- マイクアイコン（録音中はアクセントカラー） -->
             <Canvas Grid.Column="0" Width="20" Height="24" VerticalAlignment="Center" Margin="0,0,12,0">
-                <Path Fill="{DynamicResource AccentBrush}"
+                <Path Fill="{DynamicResource RecordBrush}"
                       Data="M 7,2 A 3,3 0 0 1 13,2 L 13,10 A 3,3 0 0 1 7,10 Z"/>
-                <Path Stroke="{DynamicResource AccentBrush}" StrokeThickness="1.8" StrokeStartLineCap="Round" StrokeEndLineCap="Round"
+                <Path Stroke="{DynamicResource RecordBrush}" StrokeThickness="1.8" StrokeStartLineCap="Round" StrokeEndLineCap="Round"
                       Data="M 4,9 A 6,6 0 0 0 16,9 M 10,15 L 10,19 M 6,19 L 14,19"/>
             </Canvas>
 
@@ -30,8 +30,8 @@
             <Grid Grid.Column="2" ClipToBounds="True" Margin="14,0,0,0">
                 <TextBlock x:Name="PartialTextBlock"
                            VerticalAlignment="Center" HorizontalAlignment="Right"
-                           FontFamily="Yu Gothic UI, Yu Gothic, Meiryo UI, sans-serif" FontSize="13"
-                           Foreground="{DynamicResource SubFgBrush}" Text=""/>
+                           FontFamily="{DynamicResource AppFont}" FontSize="13"
+                           Foreground="{DynamicResource FgBrush}" Text=""/>
             </Grid>
         </Grid>
     </Border>

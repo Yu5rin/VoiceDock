@@ -139,7 +139,15 @@ public static class TextInjector
 
         // 文字列だけを控えていると、画像やファイルをコピーしていた場合に
         // 中身を消してしまう。形式を問わず控えを取っておく。
-        var backup = CaptureClipboard();
+        // 前の貼り付けの復元がまだなら、いまクリップボードにあるのは前の認識文。それを控えると
+        // 利用者がコピーしていた内容を失うため、最初に控えたものを持ち続ける
+        System.Windows.DataObject? backup;
+        lock (ClipboardRestoreLock)
+        {
+            _pendingClipboardBackup ??= CaptureClipboard();
+            backup = _pendingClipboardBackup;
+            _clipboardRestoreGeneration++;
+        }
         List<ushort>? heldModifiers = null;
         try
         {
@@ -210,8 +218,16 @@ public static class TextInjector
     /// <summary>貼り付けが終わる頃合いを見て、控えたクリップボードの内容を書き戻す。</summary>
     private static void RestoreClipboardLater(System.Windows.DataObject backup)
     {
+        int generation;
+        lock (ClipboardRestoreLock) generation = _clipboardRestoreGeneration;
         _ = Task.Delay(300).ContinueWith(_ =>
         {
+            lock (ClipboardRestoreLock)
+            {
+                // 待っている間に次の貼り付けがあったら、そちらの復元に任せる
+                if (generation != _clipboardRestoreGeneration) return;
+                _pendingClipboardBackup = null;
+            }
             try
             {
                 var thread = new Thread(() =>
@@ -224,6 +240,14 @@ public static class TextInjector
             catch { /* 復元失敗は無視 */ }
         });
     }
+
+    private static readonly object ClipboardRestoreLock = new();
+
+    /// <summary>貼り付けの前に控えた、利用者のクリップボードの内容（復元が済むまで持つ）。</summary>
+    private static System.Windows.DataObject? _pendingClipboardBackup;
+
+    /// <summary>貼り付けのたびに進める番号。復元を待つ間に次の貼り付けがあったかを見分ける。</summary>
+    private static int _clipboardRestoreGeneration;
 
     private static INPUT MakeKeyInput(ushort vk, bool keyUp) => new()
     {
@@ -294,15 +318,19 @@ public static class TextInjector
         return released;
     }
 
-    /// <summary>解除した修飾キーを、まだ押されたままなら押し直す。</summary>
+    /// <summary>
+    /// 解除した修飾キーを押し直す。
+    ///
+    /// 「離した」ことにした後は、キーの状態を読んでも「離れている」としか返らない（こちらが送った
+    /// 「離した」が反映されるため）。以前は状態を読んで押されていれば戻す、としていたため、
+    /// 実際には一度も戻らず、押しっぱなし方式でホットキーを握ったまま話すと、Ctrl などが
+    /// 離れた扱いのままになっていた。解除から押し直しまでは数ミリ秒なので、そのまま押し直す。
+    /// </summary>
     private static void RestoreHeldModifiers(List<ushort> released)
     {
         if (released.Count == 0) return;
-        var stillHeld = released.Where(vk => (GetAsyncKeyState(vk) & 0x8000) != 0)
-                                .Select(vk => MakeKeyInput(vk, keyUp: false))
-                                .ToArray();
-        if (stillHeld.Length > 0)
-            SendInput((uint)stillHeld.Length, stillHeld, Marshal.SizeOf<INPUT>());
+        var inputs = released.Select(vk => MakeKeyInput(vk, keyUp: false)).ToArray();
+        SendInput((uint)inputs.Length, inputs, Marshal.SizeOf<INPUT>());
     }
 
     /// <summary>
@@ -434,7 +462,7 @@ public static class TextInjector
             if (focused == IntPtr.Zero) return null;
             IntPtr imeWnd = ImmGetDefaultIMEWnd(focused);
             if (imeWnd == IntPtr.Zero) return null;
-            return SendMessage(imeWnd, WM_IME_CONTROL, (IntPtr)IMC_GETOPENSTATUS, IntPtr.Zero) != IntPtr.Zero;
+            return ImeControl(imeWnd, IMC_GETOPENSTATUS, IntPtr.Zero) != IntPtr.Zero;
         }
         catch
         {
@@ -455,10 +483,10 @@ public static class TextInjector
             IntPtr imeWnd = ImmGetDefaultIMEWnd(focused);
             if (imeWnd == IntPtr.Zero) return;
 
-            bool open = SendMessage(imeWnd, WM_IME_CONTROL, (IntPtr)IMC_GETOPENSTATUS, IntPtr.Zero) != IntPtr.Zero;
+            bool open = ImeControl(imeWnd, IMC_GETOPENSTATUS, IntPtr.Zero) != IntPtr.Zero;
             if (!open) return;   // 元々オフ（または既にオフにしてある）なら何もしない
 
-            SendMessage(imeWnd, WM_IME_CONTROL, (IntPtr)IMC_SETOPENSTATUS, IntPtr.Zero);
+            ImeControl(imeWnd, IMC_SETOPENSTATUS, IntPtr.Zero);
             SuppressedImeWindows.Add(imeWnd);
         }
         catch
@@ -480,7 +508,7 @@ public static class TextInjector
                 try
                 {
                     if (IsWindow(imeWnd))
-                        SendMessage(imeWnd, WM_IME_CONTROL, (IntPtr)IMC_SETOPENSTATUS, (IntPtr)1);
+                        ImeControl(imeWnd, IMC_SETOPENSTATUS, (IntPtr)1);
                 }
                 catch
                 {
@@ -600,6 +628,20 @@ public static class TextInjector
     [DllImport("imm32.dll")]
     private static extern IntPtr ImmGetDefaultIMEWnd(IntPtr hWnd);
 
+    /// <summary>
+    /// 入力先の IME ウィンドウへ問い合わせる。相手のアプリが固まっていても待ち続けないよう、時間を区切る
+    /// （区切らないと、相手が応答しない間、VoiceDock のトレイもホットキーも効かなくなる）。
+    /// 応答が無ければ 0（IME はオフ扱い）。
+    /// </summary>
+    private static IntPtr ImeControl(IntPtr imeWnd, int command, IntPtr lParam)
+    {
+        return SendMessageTimeout(imeWnd, WM_IME_CONTROL, (IntPtr)command, lParam,
+            SMTO_ABORTIFHUNG, 200, out var result) != IntPtr.Zero ? result : IntPtr.Zero;
+    }
+
+    private const uint SMTO_ABORTIFHUNG = 0x0002;
+
     [DllImport("user32.dll", CharSet = CharSet.Auto)]
-    private static extern IntPtr SendMessage(IntPtr hWnd, uint Msg, IntPtr wParam, IntPtr lParam);
+    private static extern IntPtr SendMessageTimeout(IntPtr hWnd, uint Msg, IntPtr wParam, IntPtr lParam,
+        uint fuFlags, uint uTimeout, out IntPtr lpdwResult);
 }

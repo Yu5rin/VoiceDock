@@ -48,6 +48,15 @@ public sealed class SpeechBridgeServer : IDisposable
     public bool IsConnected => _socket?.State == WebSocketState.Open;
 
     /// <summary>
+    /// 接続が切れてからの時間（つながっていれば 0）。
+    /// ページは切れても 1 秒ほどで自分からつなぎ直すため、監視はこの時間が続いたときだけ再起動する。
+    /// </summary>
+    public TimeSpan DisconnectedFor =>
+        IsConnected ? TimeSpan.Zero : DateTime.UtcNow - new DateTime(Interlocked.Read(ref _disconnectedSinceTicks), DateTimeKind.Utc);
+
+    private long _disconnectedSinceTicks = DateTime.UtcNow.Ticks;
+
+    /// <summary>
     /// 実際に使われているマイクの名前（まだ録音していない場合は null）。
     /// Web Speech API にはマイクを指定する手段が無く、常に Windows の既定デバイスが使われる。
     /// どのマイクが使われているかは、録音を開始したときに初めて分かる。
@@ -159,7 +168,11 @@ public sealed class SpeechBridgeServer : IDisposable
                     try { previous.Abort(); previous.Dispose(); } catch { /* 無視 */ }
                 }
                 _log.Info("ブラウザが認識ブリッジに接続しました");
-                await ReceiveLoopAsync(_socket, ct);
+                var socket = _socket;
+                await ReceiveLoopAsync(socket, ct);
+                // 新しい接続に置き換わったのでなければ、ここから切れている
+                if (ReferenceEquals(_socket, socket))
+                    Interlocked.Exchange(ref _disconnectedSinceTicks, DateTime.UtcNow.Ticks);
             }
             else
             {
@@ -270,6 +283,11 @@ public sealed class SpeechBridgeServer : IDisposable
                     var detail = root.TryGetProperty("detail", out var de) ? de.GetString() : "";
                     RecognitionError?.Invoke(detail ?? "");
                     break;
+                case "diag":
+                    // 切断の原因を調べるため、ページが見ていた状況（切断のコード・ネットワークの変化など）を残す
+                    if (root.TryGetProperty("text", out var dt))
+                        _log.Info($"認識用ページ: {dt.GetString()}");
+                    break;
             }
         }
         catch (Exception ex)
@@ -361,17 +379,55 @@ public sealed class SpeechBridgeServer : IDisposable
   let noiseFloor = 0.01;
   const PITCH_KEEP_MS = 6000;
 
-  function send(o){ try{ if(ws && ws.readyState===1) ws.send(JSON.stringify(o)); }catch(_){} }
+  // 本体とのつながりが切れている間も、認識結果などの大事な知らせは取っておき、
+  // つながり直したらまとめて送る（切れている間に話した内容が消えないように）。
+  // 音量や認識途中の文字は、後から届いても意味がないので取っておかない。
+  const KEEP_TYPES = {final:1, mic:1, mode:1, error:1};
+  const pending = [];
+  function send(o){
+    try{
+      if(ws && ws.readyState===1){ ws.send(JSON.stringify(o)); return; }
+    }catch(_){}
+    if(KEEP_TYPES[o.type] && pending.length < 50) pending.push(o);
+  }
+
+  // 切断の原因を調べるための記録。つながり直したときに本体のログへ送る
+  let lastClose = null, netEvents = [], pageEvents = [];
+  const note = (list, s) => { list.push(s); if(list.length > 5) list.shift(); };
+  window.addEventListener('online',  () => note(netEvents, 'オンラインに戻った'));
+  window.addEventListener('offline', () => note(netEvents, 'オフラインになった'));
+  document.addEventListener('freeze', () => note(pageEvents, 'ページが凍結された'));
+  document.addEventListener('resume', () => note(pageEvents, 'ページが再開された'));
+  document.addEventListener('visibilitychange', () => note(pageEvents, '表示状態: ' + document.visibilityState));
 
   function connect(){
     ws = new WebSocket(WS_URL);
-    ws.onopen = () => send({type:'status', state:'ready'});
+    ws.onopen = () => {
+      send({type:'status', state:'ready'});
+      if(lastClose){
+        const gap = Date.now() - lastClose.at;
+        const parts = [`前回の切断 code=${lastClose.code}${lastClose.clean ? '' : '（相手の応答なし）'}`,
+                       `つながり直すまで ${gap}ms`,
+                       `音声入力中=${shouldListen ? 'はい' : 'いいえ'}`,
+                       `回線=${navigator.onLine ? 'オンライン' : 'オフライン'}`];
+        if(netEvents.length) parts.push('回線の変化: ' + netEvents.join(' → '));
+        if(pageEvents.length) parts.push('ページ: ' + pageEvents.join(' → '));
+        if(pending.length) parts.push(`取っておいた知らせ ${pending.length} 件を送ります`);
+        send({type:'diag', text: parts.join(' / ')});
+        netEvents = []; pageEvents = []; lastClose = null;
+      }
+      // 送れなかったものは send が取っておき直すので、回数を決めて回す（送れないときに回り続けないように）
+      for(let n = pending.length; n > 0; n--) send(pending.shift());
+    };
     ws.onmessage = (e) => {
       let m; try{ m = JSON.parse(e.data); }catch(_){ return; }
       if(m.cmd === 'start') startRecog(!!m.processLocally, m.lang);
       else if(m.cmd === 'stop') stopRecog();
     };
-    ws.onclose = () => setTimeout(connect, 1000);
+    ws.onclose = (e) => {
+      if(!lastClose) lastClose = {code: e.code, clean: e.wasClean, at: Date.now()};
+      setTimeout(connect, 1000);
+    };
     ws.onerror = () => { try{ ws.close(); }catch(_){} };
   }
 

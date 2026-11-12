@@ -25,8 +25,16 @@ public partial class App : Application
     private RecordingController? _controller;
     private System.Windows.Threading.DispatcherTimer? _watchdog;
 
-    /// <summary>認識ブリッジに接続できていない状態が何回続いたか（一瞬の切断で再起動しないため）。</summary>
-    private int _browserDownChecks;
+    private DateTime _lastRelaunchUtc = DateTime.MinValue;
+
+    /// <summary>認識用ブラウザの監視の間隔。</summary>
+    private static readonly TimeSpan WatchdogInterval = TimeSpan.FromSeconds(5);
+
+    /// <summary>この時間つながらないままなら、認識用ブラウザが落ちたとみなして再起動する（一瞬の切断は 1 秒ほどで戻る）。</summary>
+    private static readonly TimeSpan BrowserDownThreshold = TimeSpan.FromSeconds(15);
+
+    /// <summary>再起動した後、つながるのを待つ時間（その間は重ねて再起動しない）。</summary>
+    private static readonly TimeSpan RelaunchCooldown = TimeSpan.FromSeconds(30);
 
     private SettingsWindow? _settingsWindow;
     private DictionaryWindow? _dictionaryWindow;
@@ -201,7 +209,7 @@ public partial class App : Application
         // ブラウザ監視: 認識用ブラウザが落ちていたら自動再起動する
         _watchdog = new System.Windows.Threading.DispatcherTimer
         {
-            Interval = TimeSpan.FromSeconds(20),
+            Interval = WatchdogInterval,
         };
         _watchdog.Tick += (_, _) =>
         {
@@ -213,15 +221,12 @@ public partial class App : Application
             // すぐ終了する。プロセスの終了だけを見て再起動していたため、
             // 実際には動いているブラウザに新しいウィンドウを開き続け、
             // 認識用ウィンドウが際限なく増えてしまっていた。
-            if (_bridge.IsConnected)
-            {
-                _browserDownChecks = 0;
-                return;
-            }
-
-            // 起動直後や一瞬の切断で慌てて再起動しないよう、続けて落ちている場合だけ動かす
-            if (++_browserDownChecks < 2) return;
-            _browserDownChecks = 0;
+            //
+            // 切れた時間で判断する。以前は 20 秒ごとの確認で「2 回続けて切れていたら」としていたため、
+            // ページが 1 秒でつなぎ直す一瞬の切断が 2 回の確認に重なると、動いているブラウザを再起動していた
+            // （実機ログ 2026-11-05〜12）。また本当に落ちたときは、気づくまで最大 40 秒かかっていた。
+            if (_bridge.DisconnectedFor < BrowserDownThreshold) return;
+            if (_browser.IsRelaunching || DateTime.UtcNow - _lastRelaunchUtc < RelaunchCooldown) return;
 
             // 起動できない環境で無限に再試行しないよう、上限に達したら監視を止める
             if (_browser.GaveUp)
@@ -233,7 +238,8 @@ public partial class App : Application
                                  ToastKind.Error);
                 return;
             }
-            _browser.Relaunch();
+            _lastRelaunchUtc = DateTime.UtcNow;
+            _browser.RelaunchInBackground();
         };
         _watchdog.Start();
 
@@ -576,7 +582,7 @@ public partial class App : Application
     /// 認識用ブラウザを起動し直す。使用ブラウザの設定を変えたときや、
     /// 再起動を諦めて止まってしまった状態から復帰させるときに使う。
     /// </summary>
-    private void RestartBrowser()
+    private async void RestartBrowser()
     {
         if (_browser == null)
         {
@@ -584,7 +590,12 @@ public partial class App : Application
             return;
         }
 
-        if (_browser.Restart())
+        // 古いブラウザが終わるのを待つため、画面を止めないよう別スレッドで行う。
+        // その間に監視が重ねて再起動しないよう、再起動した時刻を先に記録する
+        _lastRelaunchUtc = DateTime.UtcNow;
+        var browser = _browser;
+        bool restarted = await Task.Run(() => browser.Restart());
+        if (restarted)
         {
             // 諦めて止めたウォッチドッグを動かし直す
             _watchdog?.Start();

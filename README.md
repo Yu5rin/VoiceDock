@@ -130,10 +130,19 @@ VoiceDock\
 dotnet publish src/VoiceDock/VoiceDock.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:EnableCompressionInSingleFile=true -o publish
 ```
 
-`publish/VoiceDock.exe` が生成されます。GitHub Actions（`.github/workflows/build.yml`）でも同じ手順でビルドし、アーティファクトとして exe を取得できます。GitHub Release は Actions の「Run workflow」から作成できます（Actions の無料枠を無駄に消費しないよう、タグ push では起動しません）。
+`publish/VoiceDock.exe` が生成されます。
+
+Windows に依存しない処理（文章の後処理・辞書・保存先・更新の確認など）のテストは、Linux や macOS でも動かせます:
+
+```
+dotnet run --project tests/FeatureTests
+```
+
+GitHub Actions（`.github/workflows/build.yml`）でも同じ手順でビルドし、アーティファクトとして exe を取得できます。GitHub Release は Actions の「Run workflow」から作成できます（Actions の無料枠を無駄に消費しないよう、タグ push では起動しません）。
 
 ## 実装メモ・既知の制限
 
+- **認識エンジンとのつながり**: 回線の切り替わり（Wi-Fi の切り替え・スリープからの復帰など）で、認識用ページとのつながりが一瞬切れることがあります。ページは 1 秒ほどで自分からつなぎ直し、その間の認識結果は取っておいて後から入力します。音声入力中なら、そのまま続けます。15 秒たってもつながらないときだけ、認識用ブラウザを起動し直します
 - **認識にはブラウザが必要**: Web Speech API は埋め込み(WebView2)では動作しないため、Chromium 系ブラウザを裏で起動して利用します。使用ブラウザは Windows の既定ブラウザに追従（Chrome が既定なら Chrome、それ以外は Edge）。設定画面で「常に Edge」「常に Chrome」も選択できます（変更するとその場で切り替わります）
 - **マイク許可**: 認識ページ（127.0.0.1）へのマイク許可は起動フラグ（`--use-fake-ui-for-media-stream`、専用プロファイルの隔離インスタンス）で自動付与します
 - **使用するマイク**: 常に Windows の既定の録音デバイスを使います。Web Speech API にマイクを指定する手段が無いため、アプリ側に選択項目はありません。変更するときは Windows の 設定 → システム → サウンド → 入力 で切り替えてください。録音中にデバイスが差し替わった場合は認識を開き直して追随します。実際に使われているマイク名は設定画面に表示されます（音声入力を一度行うと表示されます）

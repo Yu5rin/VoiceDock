@@ -174,6 +174,7 @@ public sealed class RecordingController : IDisposable
         _bridge.LevelChanged += _overlay.UpdateLevel;
         _bridge.RecognitionError += OnRecognitionError;
         _bridge.RecognitionModeReported += OnRecognitionModeReported;
+        _bridge.Ready += OnBridgeReady;
         _settings.Changed += s => _dispatcher.BeginInvoke(() => OnSettingsChanged(s));
     }
 
@@ -264,6 +265,24 @@ public sealed class RecordingController : IDisposable
         if (_settings.Current.SoundFeedback) SoundFeedback.PlayStart();
         _log.Info("音声入力を開始しました");
         ListeningChanged?.Invoke(true);
+    }
+
+    /// <summary>
+    /// 認識用ページとつながり直したとき、音声入力中なら認識を続けるよう伝え直す。
+    /// 一瞬の切断ならページ側は認識を続けているが、ブラウザを再起動した場合は新しいページが
+    /// 何も知らないため、伝え直さないと音声入力中のまま何も入らなくなる。何度送っても害はない。
+    /// </summary>
+    private void OnBridgeReady()
+    {
+        _dispatcher.BeginInvoke(() =>
+        {
+            lock (_sync)
+            {
+                if (!_listening) return;
+                _log.Info("認識エンジンとつながり直したため、音声入力を続けます");
+                _ = _bridge.StartRecognitionAsync(_settings.Current.PreferLocalRecognition, _activeLanguage);
+            }
+        });
     }
 
     private void StopListening(string reason)

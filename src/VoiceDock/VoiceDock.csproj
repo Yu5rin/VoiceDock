@@ -28,6 +28,14 @@
     <Using Remove="System.Drawing" />
   </ItemGroup>
 
+  <ItemGroup>
+    <!--
+      認識用ブラウザの片付けに使う（起動引数の user-data-dir から、専用プロファイルで動いている
+      Edge / Chrome を確実に見つけるため。WMI の Win32_Process で起動引数を読む）
+    -->
+    <PackageReference Include="System.Management" Version="8.0.0" />
+  </ItemGroup>
+
   <!--
     認識エンジンは Web Speech API（ブラウザ側）に移行したため、
     ローカル音声認識ライブラリ（Whisper.net）およびマイク録音ライブラリ（NAudio）は不要。

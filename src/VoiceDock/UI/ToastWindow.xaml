@@ -6,9 +6,9 @@
         WindowStyle="None" AllowsTransparency="True" Background="Transparent"
         Topmost="True" ShowInTaskbar="False" ShowActivated="False"
         Focusable="False" ResizeMode="NoResize" Opacity="0"
-        FontFamily="Yu Gothic UI, Yu Gothic, Meiryo UI, sans-serif" FontSize="13">
+        FontFamily="{DynamicResource AppFont}" FontSize="13">
     <!-- ミニマルデザインに合わせた自作トースト通知（バルーン通知は使わない） -->
-    <Border CornerRadius="8" Cursor="Hand" Background="{DynamicResource ToastBrush}" BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1">
+    <Border CornerRadius="8" Cursor="Hand" Background="{DynamicResource ToastBrush}" BorderBrush="{DynamicResource ControlBorderBrush}" BorderThickness="1">
         <Grid>
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="Auto"/>
@@ -17,11 +17,12 @@
             <Border Grid.Column="0" x:Name="AccentBar" Width="3" Background="{DynamicResource SubFgBrush}"
                     CornerRadius="1.5" Margin="10,12,0,12"/>
             <StackPanel Grid.Column="1" Margin="12,12,16,12">
-                <TextBlock x:Name="TitleText" Foreground="{DynamicResource FgBrush}" FontWeight="Bold" Text="VoiceDock"/>
-                <TextBlock x:Name="MessageText" Foreground="{DynamicResource SubFgBrush}" TextWrapping="Wrap" Margin="0,4,0,0"/>
+                <TextBlock x:Name="TitleText" Foreground="{DynamicResource SubFgBrush}" FontSize="12" FontWeight="SemiBold" Text="VoiceDock"/>
+                <!-- 本文がいちばん大事なので、はっきり読める色にする -->
+                <TextBlock x:Name="MessageText" Foreground="{DynamicResource FgBrush}" TextWrapping="Wrap" Margin="0,4,0,0"/>
                 <!-- 自動で消えない通知にだけ出す案内 -->
-                <TextBlock x:Name="DismissHint" Foreground="{DynamicResource SubFgBrush}" FontSize="11"
-                           Opacity="0.7" Margin="0,6,0,0" Visibility="Collapsed"
+                <TextBlock x:Name="DismissHint" Foreground="{DynamicResource AccentBrush}" FontSize="12"
+                           Margin="0,6,0,0" Visibility="Collapsed"
                            Text="クリックすると閉じます"/>
             </StackPanel>
         </Grid>

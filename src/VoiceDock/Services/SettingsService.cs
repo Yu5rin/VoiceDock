@@ -159,6 +159,23 @@ public sealed class SettingsService
     /// </summary>
     private void Normalize(AppSettings s)
     {
+        // 手で編集したファイルやバックアップに null が書かれていても、後の処理で落ちないようにする
+        // （落ちると、設定がまるごと初期化されたり、復元が途中で止まったりする）
+        var defaults = new AppSettings();
+        s.Hotkey ??= defaults.Hotkey;
+        s.UndoHotkey ??= defaults.UndoHotkey;
+        s.RecognitionLanguage ??= defaults.RecognitionLanguage;
+        s.UpdateApiUrl ??= defaults.UpdateApiUrl;
+        s.MicrophoneDeviceId ??= "";
+        s.MicrophoneLabel ??= "";
+        if (!Enum.IsDefined(s.HotkeyMode)) s.HotkeyMode = defaults.HotkeyMode;
+        if (!Enum.IsDefined(s.InputMethod)) s.InputMethod = defaults.InputMethod;
+        if (!Enum.IsDefined(s.NewlineMode)) s.NewlineMode = defaults.NewlineMode;
+        if (!Enum.IsDefined(s.Browser)) s.Browser = defaults.Browser;
+        if (!Enum.IsDefined(s.CharacterWidth)) s.CharacterWidth = defaults.CharacterWidth;
+        if (!Enum.IsDefined(s.UpdateCheckMode)) s.UpdateCheckMode = defaults.UpdateCheckMode;
+        if (!Enum.IsDefined(s.OverlayPosition)) s.OverlayPosition = defaults.OverlayPosition;
+
         if (!IsAllowedUpdateUrl(s.UpdateApiUrl))
         {
             _log.Warn($"更新の確認先が許可されていない URL のため、既定値に戻しました: {s.UpdateApiUrl}");
@@ -186,6 +203,7 @@ public sealed class SettingsService
         // アプリ別の入力方式が効かなくなるため、毎回作り直す。
         s.AppInputMethods = WithIgnoreCase(s.AppInputMethods);
         s.AppNewlineModes = WithIgnoreCase(s.AppNewlineModes);
+        s.WindowPlacements ??= new Dictionary<string, string>();
     }
 
     /// <summary>アプリ名をキーにした表を、大文字小文字を区別しない比較で作り直す（null なら空にする）。</summary>

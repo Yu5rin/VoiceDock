@@ -225,12 +225,13 @@ public sealed class SpeechBridgeServer : IDisposable
     private async Task ReceiveLoopAsync(WebSocket socket, CancellationToken ct)
     {
         var buffer = new byte[8192];
-        var sb = new StringBuilder();
+        // 分かれて届いた分は、つなげてから文字に直す（境目で 1 文字が割れると化けるため）
+        using var message = new System.IO.MemoryStream();
         try
         {
             while (socket.State == WebSocketState.Open && !ct.IsCancellationRequested)
             {
-                sb.Clear();
+                message.SetLength(0);
                 WebSocketReceiveResult result;
                 do
                 {
@@ -240,10 +241,10 @@ public sealed class SpeechBridgeServer : IDisposable
                         await socket.CloseAsync(WebSocketCloseStatus.NormalClosure, "", CancellationToken.None);
                         return;
                     }
-                    sb.Append(Encoding.UTF8.GetString(buffer, 0, result.Count));
+                    message.Write(buffer, 0, result.Count);
                 } while (!result.EndOfMessage);
 
-                HandleMessage(sb.ToString());
+                HandleMessage(Encoding.UTF8.GetString(message.GetBuffer(), 0, (int)message.Length));
             }
         }
         catch (Exception) when (ct.IsCancellationRequested)
@@ -525,15 +526,30 @@ public sealed class SpeechBridgeServer : IDisposable
         else send({type:'partial', text:text});
       }
     };
-    r.onerror = (ev) => { if(ev.error !== 'no-speech') send({type:'error', detail:ev.error}); };
+    r.onerror = (ev) => {
+      if(ev.error === 'no-speech') return;
+      if(ev.error !== 'aborted') failedSinceStart = true;
+      // 続けても認識できないエラーは、再開を繰り返さずに止める（本体も音声入力を止めて知らせる）
+      if(FATAL_ERRORS[ev.error]){ shouldListen = false; stopLevel(); }
+      send({type:'error', detail:ev.error});
+    };
     r.onstart = () => { recogRunning = true; };
-    // 連続認識は無音などで自動終了することがあるため、継続希望なら再開する
+    // 連続認識は無音などで自動終了することがあるため、継続希望なら再開する。
+    // エラーで終わった場合は、間隔を空けながら再開する（オフラインのときなどに、
+    // エラーと再開を高速で繰り返して重くなるのを防ぐ）
     r.onend = () => {
       recogRunning = false;
-      if(shouldListen) startEngine();
+      if(!shouldListen) return;
+      if(!failedSinceStart){ restartDelay = 0; startEngine(); return; }
+      restartDelay = Math.min(5000, Math.max(300, restartDelay * 2));
+      if(restartTimer) clearTimeout(restartTimer);
+      restartTimer = setTimeout(() => { restartTimer = null; if(shouldListen && !recogRunning) startEngine(); }, restartDelay);
     };
     return r;
   }
+
+  const FATAL_ERRORS = {'not-allowed':1, 'service-not-allowed':1, 'audio-capture':1, 'language-not-supported':1};
+  let failedSinceStart = false, restartDelay = 0, restartTimer = null;
 
   // 使うマイク。micId は本体で選んだもの（空なら Windows の既定）、activeMicId は実際に開けたもの
   let micId = '', micLabel = '', activeMicId = '';
@@ -542,6 +558,7 @@ public sealed class SpeechBridgeServer : IDisposable
   // 認識を始める。マイクを選んでいれば、そのマイクの音声トラックを渡す
   // （SpeechRecognition.start(audioTrack)。対応していないブラウザでは既定のマイクで認識する）
   function startEngine(){
+    failedSinceStart = false;
     const t = activeMicId ? micTrack() : null;
     if(t && t.readyState === 'live'){
       try{ recog.start(t); return; }catch(_){ /* 渡せなければ既定のマイクで始める */ }
@@ -588,6 +605,8 @@ public sealed class SpeechBridgeServer : IDisposable
 
   function stopRecog(){
     shouldListen = false;
+    if(restartTimer){ clearTimeout(restartTimer); restartTimer = null; }
+    restartDelay = 0;
     try{ recog && recog.stop(); }catch(_){}
     stopLevel();
     send({type:'status', state:'stopped'});
@@ -636,10 +655,22 @@ public sealed class SpeechBridgeServer : IDisposable
     }
   }
 
+  // マイクを開くのには時間がかかる。開いている途中で止められたら、開けたマイクをすぐ閉じる
+  // （閉じないと、短く押して離したときなどに、止めた後もマイクを掴んだままになる）。
+  // levelGen: 止めるたびに進める番号 / levelOpening: 開いている途中の処理（重ねて開かないため）
+  let levelGen = 0, levelOpening = null;
   async function startLevel(){
-    if(micStream) return;
+    while(levelOpening) await levelOpening;
+    if(micStream || !shouldListen) return;
+    levelOpening = openLevel(levelGen).finally(() => { levelOpening = null; });
+    await levelOpening;
+  }
+
+  async function openLevel(gen){
     try{
-      micStream = await openMic();
+      const s = await openMic();
+      if(gen !== levelGen || !shouldListen){ s.getTracks().forEach(t => t.stop()); return; }
+      micStream = s;
       reportMic();
       audioCtx = new (window.AudioContext || window.webkitAudioContext)();
       const src = audioCtx.createMediaStreamSource(micStream);
@@ -776,6 +807,7 @@ public sealed class SpeechBridgeServer : IDisposable
   }catch(_){ /* 対応していない環境では何もしない */ }
 
   function stopLevel(){
+    levelGen++;
     if(levelTimer){ clearInterval(levelTimer); levelTimer = null; }
     pitchFrames = [];
     if(micStream){ micStream.getTracks().forEach(t => t.stop()); micStream = null; }

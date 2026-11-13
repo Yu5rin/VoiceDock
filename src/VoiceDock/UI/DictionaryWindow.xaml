@@ -1,12 +1,12 @@
 <Window x:Class="VoiceDock.UI.DictionaryWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="VoiceDock 辞書管理"
-        Width="700" Height="720" MinWidth="540" MinHeight="560"
+        Title="VoiceDock の辞書"
+        Width="720" Height="700" MinWidth="560" MinHeight="560"
         Style="{StaticResource WindowStyle}"
         WindowStartupLocation="CenterScreen"
         Closing="Window_Closing">
-    <Grid Margin="20,16">
+    <Grid Margin="24,20,24,18">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="Auto"/>
@@ -18,9 +18,9 @@
             <RowDefinition Height="Auto"/>
         </Grid.RowDefinitions>
 
-        <TextBlock Grid.Row="0" Text="辞書管理" FontSize="18" FontWeight="Bold"/>
-        <TextBlock Grid.Row="1" Style="{StaticResource SubText}" Margin="0,4,0,12"
-                   Text="認識された文字を、登録した表記に置き換えます。「やまだ」のように読みで登録すると、「ヤマダ」と認識された場合にも当たります（ひらがな・カタカナ・半角カナは区別しません）。別の漢字に変換されてしまう語は、実際に出てくる語をそのまま登録してください。"/>
+        <TextBlock Grid.Row="0" Text="辞書" Style="{StaticResource PageTitle}"/>
+        <TextBlock Grid.Row="1" Style="{StaticResource SubText}" Margin="0,4,0,14"
+                   Text="認識された文字を、登録した表記に置き換えます。「やまだ」のように読みで登録すると、「ヤマダ」と認識されたときにも当たります。別の漢字になってしまう言葉は、実際に出てくる文字をそのまま登録してください。"/>
 
         <!-- 登録フォーム -->
         <Border Grid.Row="2" Style="{StaticResource FormPanel}" Margin="0,0,0,12">
@@ -37,24 +37,29 @@
                     <RowDefinition Height="Auto"/>
                 </Grid.RowDefinitions>
 
-                <TextBlock Grid.Row="0" Grid.Column="0" Text="読み・誤認識語" Style="{StaticResource FieldLabel}"/>
+                <TextBlock Grid.Row="0" Grid.Column="0" Text="読み・誤って認識される言葉（例: やまだ）" Style="{StaticResource FieldLabel}"/>
                 <TextBox Grid.Row="1" Grid.Column="0" x:Name="WrongBox"
+                         AutomationProperties.Name="読み・誤って認識される言葉"
                          ToolTip="例: やまだ / せいきゅうナンバー"/>
                 <TextBlock Grid.Row="1" Grid.Column="1" Text="→" Margin="10,0"
                            VerticalAlignment="Center" Foreground="{StaticResource SubFgBrush}"/>
-                <TextBlock Grid.Row="0" Grid.Column="2" Text="出したい表記" Style="{StaticResource FieldLabel}"/>
+                <TextBlock Grid.Row="0" Grid.Column="2" Text="出したい表記（例: 山田）" Style="{StaticResource FieldLabel}"/>
                 <TextBox Grid.Row="1" Grid.Column="2" x:Name="CorrectBox"
+                         AutomationProperties.Name="出したい表記"
                          ToolTip="例: 山田 / 請求No."/>
 
                 <CheckBox Grid.Row="2" Grid.ColumnSpan="3" x:Name="WholeOnlyCheck" Margin="0,10,0,0"
                           Content="話した言葉全体が一致したときだけ置き換える"
                           ToolTip="「角 → Kado」のような短い語は、「三角」「角度」の中にも当たってしまいます。オンにすると「角」とだけ話したときに限り置き換えます"/>
 
-                <DockPanel Grid.Row="3" Grid.ColumnSpan="3" Margin="0,10,0,0" LastChildFill="True">
+                <DockPanel Grid.Row="3" Grid.ColumnSpan="3" Margin="0,12,0,0" LastChildFill="True">
                     <Button x:Name="PrimaryButton" Content="追加" Style="{StaticResource PrimaryButton}"
                             Click="Primary_Click" ToolTip="Enter キーでも実行できます"/>
-                    <Button x:Name="NewButton" Content="新規入力" Margin="8,0,0,0" Click="New_Click"
+                    <Button x:Name="NewButton" Content="入力欄を空にする" Margin="8,0,0,0" Click="New_Click"
                             ToolTip="入力欄を空にして、新しく登録する状態に戻します"/>
+                    <Button x:Name="UndoDeleteButton" DockPanel.Dock="Right" Content="元に戻す" Margin="8,0,0,0"
+                            Style="{StaticResource LinkButton}" VerticalAlignment="Center" Visibility="Collapsed"
+                            Click="UndoDelete_Click" ToolTip="いま削除した項目を元に戻します"/>
                     <TextBlock x:Name="FormStatus" Style="{StaticResource SubText}" Margin="12,0,0,0"
                                VerticalAlignment="Center"/>
                 </DockPanel>
@@ -62,7 +67,7 @@
         </Border>
 
         <!-- 検索 -->
-        <Grid Grid.Row="3" Margin="0,0,0,6">
+        <Grid Grid.Row="3" Margin="0,0,0,8">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="Auto"/>
                 <ColumnDefinition Width="*"/>
@@ -71,6 +76,7 @@
             <TextBlock Grid.Column="0" Text="検索" VerticalAlignment="Center" Margin="0,0,8,0"
                        Foreground="{StaticResource SubFgBrush}"/>
             <TextBox Grid.Column="1" x:Name="SearchBox" TextChanged="SearchBox_TextChanged"
+                     AutomationProperties.Name="検索"
                      ToolTip="読み・表記のどちらでも探せます（Ctrl+F）"/>
             <TextBlock Grid.Column="2" x:Name="CountText" Style="{StaticResource SubText}"
                        VerticalAlignment="Center" Margin="10,0,0,0"/>
@@ -85,7 +91,7 @@
                       SelectionChanged="Grid_SelectionChanged"
                       Background="{StaticResource PanelBrush}">
                 <DataGrid.Columns>
-                    <DataGridTextColumn Header="読み・誤認識語" Binding="{Binding Wrong}" Width="*"/>
+                    <DataGridTextColumn Header="読み・誤って認識される言葉" Binding="{Binding Wrong}" Width="*"/>
                     <DataGridTextColumn Header="出したい表記" Binding="{Binding Correct}" Width="*"/>
                     <DataGridTextColumn Header="一致" Binding="{Binding MatchLabel}" Width="72"/>
                     <DataGridTextColumn Header="使用回数" Binding="{Binding UseCount}" Width="72"/>
@@ -98,24 +104,26 @@
         </Grid>
 
         <WrapPanel Grid.Row="5" Margin="0,10,0,0">
-            <Button Content="選択した項目を削除" Margin="0,0,8,4" Click="DeleteRows_Click"
+            <Button x:Name="DeleteButton" Content="選んだ項目を削除" Margin="0,0,8,4" Click="DeleteRows_Click"
+                    Style="{StaticResource DangerButton}" IsEnabled="False"
                     ToolTip="Delete キーでも削除できます"/>
-            <Button Content="CSV に書き出す" Margin="0,0,8,4" Click="Export_Click"/>
-            <Button Content="CSV から読み込む" Margin="0,0,8,4" Click="Import_Click"/>
+            <Button Content="Excel から貼り付け" Margin="0,0,8,4" Click="Paste_Click"
+                    ToolTip="Excel で 2 列（読み・表記）をコピーしてから押してください。一覧を選んで Ctrl+V でも貼り付けられます。3 列目に「全体のみ」と書いた行は、話した言葉全体が一致したときだけ置き換えます。同じ読みがあれば上書きします"/>
+            <Button Content="CSV に書き出す…" Margin="0,0,8,4" Click="Export_Click"
+                    ToolTip="書き出したファイルには社内の用語や人名が含まれます。持ち出しや保存先に注意してください"/>
+            <Button Content="CSV から読み込む…" Margin="0,0,8,4" Click="Import_Click"/>
         </WrapPanel>
         <TextBlock Grid.Row="6" Style="{StaticResource SubText}" Margin="0,2,0,0"
-                   Text="Excel の 2 列（読み・表記）をコピーし、一覧を選んで Ctrl+V で一括登録することもできます。3 列目に「全体のみ」と書いた行は、話した言葉全体が一致したときだけ置き換えます。同じ読みがあれば上書きします。使用回数は、この画面を開いた時点の回数です。"/>
+                   Text="一覧の項目を選ぶと、上の欄で書き直せます。使用回数は、この画面を開いた時点の回数です。"/>
 
         <!-- 試し入力 -->
         <Border Grid.Row="7" Style="{StaticResource FormPanel}" Margin="0,12,0,0">
             <StackPanel>
-                <TextBlock Text="試す — 認識された文章を想定して入力すると、置き換え後の結果を表示します"
+                <TextBlock Text="試す — 認識されそうな文章を入れると、置き換えた後の結果を表示します（例: ヤマダさんに連絡）"
                            Style="{StaticResource FieldLabel}"/>
                 <TextBox x:Name="TryBox" TextChanged="TryBox_TextChanged"
-                         ToolTip="例: ヤマダさんに連絡"/>
+                         AutomationProperties.Name="試す"/>
                 <TextBlock x:Name="TryResult" Margin="0,6,0,0" TextWrapping="Wrap"/>
-                <TextBlock Style="{StaticResource SubText}" Margin="0,8,0,0"
-                           Text="CSV に書き出したファイルには社内用語・人名が含まれます。社外への持ち出しや保存先には十分注意してください。"/>
             </StackPanel>
         </Border>
     </Grid>

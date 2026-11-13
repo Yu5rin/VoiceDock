@@ -63,9 +63,77 @@ public partial class App : Application
     private static readonly TimeSpan IdleUpdateCheckInterval = TimeSpan.FromSeconds(30);
     private static readonly TimeSpan PeriodicUpdateCheckInterval = TimeSpan.FromHours(6);
 
+    /// <summary>予期しないエラーを知らせた最後の時刻（同じエラーが続くときに通知で埋めないため）。</summary>
+    private DateTime _unexpectedErrorNotifiedUtc = DateTime.MinValue;
+
+    /// <summary>起動が終わったか（起動の途中のエラーは、続けずに終了する）。</summary>
+    private bool _started;
+
+    /// <summary>再起動の上限に達したことを知らせたか（同じ通知を繰り返さないため）。</summary>
+    private bool _gaveUpNotified;
+
+    /// <summary>取り消しのホットキーを登録しておきたい設定だったか（設定が変わったときだけ登録し直すため）。</summary>
+    private string _undoHotkeyApplied = "";
+
+    /// <summary>
+    /// 予期しないエラーでアプリごと落ちないようにする。
+    /// 常駐アプリが黙って消えると、利用者は「ホットキーが効かない」としか分からず、IME がオフのまま残ったり、
+    /// 認識用ブラウザが取り残されたりする。ログに残し、IME を戻し、1 度だけ知らせて動き続ける。
+    /// </summary>
+    private void InstallExceptionHandlers()
+    {
+        DispatcherUnhandledException += (_, args) =>
+        {
+            args.Handled = true;
+            if (_started)
+            {
+                ReportUnexpectedError(args.Exception);
+                return;
+            }
+            // 起動の途中で失敗したまま続けると、トレイのアイコンが無いのに動き続け、次の起動もできなくなる
+            try { _log?.Error($"起動の途中でエラーが発生したため終了します: {args.Exception}"); } catch { /* 無視 */ }
+            try
+            {
+                MessageDialog.Show(null, "VoiceDock を起動できませんでした",
+                    $"起動の途中でエラーが発生しました。\n\n{args.Exception.Message}\n\nログの保存先: {AppPaths.LogsDir}",
+                    MessageDialogKind.Danger, "閉じる");
+            }
+            catch { /* 知らせられなくても終了する */ }
+            Shutdown();
+        };
+        // トレイメニュー（WinForms）から起きたエラーは、上の受け皿を通らない。同じように受ける
+        System.Windows.Forms.Application.ThreadException += (_, args) => ReportUnexpectedError(args.Exception);
+        TaskScheduler.UnobservedTaskException += (_, args) =>
+        {
+            _log?.Error($"裏の処理で予期しないエラーが発生しました: {args.Exception}");
+            args.SetObserved();
+        };
+        AppDomain.CurrentDomain.UnhandledException += (_, args) =>
+        {
+            // ここに来たら終了は避けられない。原因を残し、IME だけは戻しておく
+            try { _log?.Error($"予期しないエラーで終了します: {args.ExceptionObject}"); } catch { /* 無視 */ }
+            try { TextInjector.RestoreSuppressedIme(); } catch { /* 無視 */ }
+        };
+    }
+
+    private void ReportUnexpectedError(Exception ex)
+    {
+        try { _log?.Error($"予期しないエラーが発生しました: {ex}"); } catch { /* 無視 */ }
+        try { TextInjector.RestoreSuppressedIme(); } catch { /* 無視 */ }
+        try
+        {
+            if (DateTime.UtcNow - _unexpectedErrorNotifiedUtc < TimeSpan.FromMinutes(1)) return;
+            _unexpectedErrorNotifiedUtc = DateTime.UtcNow;
+            ToastWindow.Show("予期しないエラーが発生しました。動作がおかしい場合は、トレイメニューの「トラブル解決 → ログ」をご確認ください。",
+                ToastKind.Error, onClick: ShowLog, actionHint: "クリックするとログを開きます");
+        }
+        catch { /* 知らせられなくても動き続ける */ }
+    }
+
     protected override void OnStartup(StartupEventArgs e)
     {
         base.OnStartup(e);
+        InstallExceptionHandlers();
 
         // 二重起動制御: 既に起動中なら既存インスタンスへ通知して終了する。
         // 更新直後の再起動では、旧バージョンがまだ終了しきっていないため待ってから判定する
@@ -94,6 +162,8 @@ public partial class App : Application
 
         _settings = new SettingsService(_log);
         _settings.Load();
+
+        WindowBehavior.Settings = _settings;
 
         // 認識テキストをファイルに残すかは設定に従う（既定は残さない）
         _log.PersistRecognitionText = _settings.Current.LogRecognitionText;
@@ -134,6 +204,10 @@ public partial class App : Application
 
         _tray = new TrayIconController();
         _tray.SettingsRequested += ShowSettings;
+        _tray.AppRulesRequested += ShowAppRules;
+        _tray.OpenDataFolderRequested += OpenDataFolder;
+        _tray.HelpRequested += OpenHelp;
+        _tray.AboutRequested += ShowAbout;
         _tray.DictionaryRequested += ShowDictionary;
         _tray.SnippetRequested += ShowSnippets;
         _tray.LogRequested += ShowLog;
@@ -151,7 +225,15 @@ public partial class App : Application
         _updater = new UpdateService(_log, _settings);
         _updater.CleanupOldFiles();
 
-        _overlay = new OverlayWindow();
+        _overlay = new OverlayWindow { Position = _settings.Current.OverlayPosition };
+        _settings.Changed += s => Dispatcher.BeginInvoke(() =>
+        {
+            if (_overlay == null || _overlay.Position == s.OverlayPosition) return;
+            // 音声入力中に変えた場合も、その場で新しい位置へ出し直す
+            _overlay.HideOverlay();
+            _overlay.Position = s.OverlayPosition;
+            if (_controller is { IsListening: true }) _overlay.ShowOverlay();
+        });
 
         // 認識ブリッジ（ローカルサーバー）を起動し、認識用ブラウザ(Edge)を裏で立ち上げる
         _bridge = new SpeechBridgeServer(_log);
@@ -181,6 +263,9 @@ public partial class App : Application
             _bridge.Start();
             _browser = new BrowserLauncher(_log, _settings);
             _browser.KillOrphanedBrowser();
+            // 起動してからつながるまでの間は、監視が「落ちた」と見なさないようにする
+            // （起動の遅い PC では、起動途中のブラウザを監視が終了させてしまっていた）
+            _lastRelaunchUtc = DateTime.UtcNow;
             if (!_browser.Launch(_bridge.IssuePageUrl))
             {
                 _tray.SetState(TrayState.Error);
@@ -198,7 +283,12 @@ public partial class App : Application
         _controller = new RecordingController(_log, _settings, processor, _bridge, _tray, _overlay);
         _controller.ListeningChanged += listening => _tray!.SetListening(listening);
         _tray.RecordToggleRequested += () => _controller!.ToggleFromMenu();
-        _tray.UndoRequested += () => _controller!.UndoLastInjection("トレイメニュー");
+        // メニューを開いた時点で入力先は前面でなくなっているため、入力したウィンドウへ戻してから取り消す
+        _tray.UndoRequested += () => _controller!.UndoLastInjection("トレイメニュー", reactivateTarget: true);
+        _tray.CanStart = () => _bridge is { IsConnected: true };
+        _tray.CanUndo = () => _controller is { CanUndo: true };
+        _tray.HasHistory = () => _controller is { History.Count: > 0 };
+        UpdateTrayHotkeys(_settings.Current);
         _tray.RegisterLastToDictionaryRequested += RegisterLastToDictionary;
         _tray.HistoryRequested += ShowHistory;
         _controller.FrequentUndoDetected += SuggestRegisterUndone;
@@ -211,7 +301,11 @@ public partial class App : Application
             _settings.Update(s => s.RecognitionLanguage = code);
             ToastWindow.Show($"認識言語を{RecognitionLanguages.LabelOf(code)}に切り替えました。");
         };
-        _settings.Changed += s => Dispatcher.BeginInvoke(() => _tray?.SetLanguage(s.RecognitionLanguage));
+        _settings.Changed += s => Dispatcher.BeginInvoke(() =>
+        {
+            _tray?.SetLanguage(s.RecognitionLanguage);
+            UpdateTrayHotkeys(s);
+        });
 
         // ブラウザ監視: 認識用ブラウザが落ちていたら自動再起動する
         _watchdog = new System.Windows.Threading.DispatcherTimer
@@ -235,16 +329,19 @@ public partial class App : Application
             if (_bridge.DisconnectedFor < BrowserDownThreshold) return;
             if (_browser.IsRelaunching || DateTime.UtcNow - _lastRelaunchUtc < RelaunchCooldown) return;
 
-            // 起動できない環境で無限に再試行しないよう、上限に達したら監視を止める
+            // 起動できない環境で再起動を繰り返さないよう、上限に達したら休む。
+            // 監視そのものは止めない（しばらくして上限の期間が明けたら、また試す）
             if (_browser.GaveUp)
             {
-                _watchdog!.Stop();
+                if (_gaveUpNotified) return;
+                _gaveUpNotified = true;
                 _tray!.SetState(TrayState.Error);
                 ToastWindow.Show("認識用ブラウザを起動できないため、音声入力を利用できません。" +
-                                 "設定から使用ブラウザをご確認いただくか、トレイメニューの「認識エンジンを再起動」をお試しください。",
+                                 "設定で使用ブラウザをご確認いただくか、トレイメニューの「トラブル解決 → 認識エンジンを再起動」をお試しください。",
                                  ToastKind.Error);
                 return;
             }
+            _gaveUpNotified = false;
             _lastRelaunchUtc = DateTime.UtcNow;
             _browser.RelaunchInBackground();
         };
@@ -277,20 +374,15 @@ public partial class App : Application
         }
 
         // 取り消しホットキー。押しても無反応な理由が分かるよう、衝突時は通知する
-        if (_settings.Current.UndoEnabled && HotkeySpec.TryParse(_settings.Current.UndoHotkey, out var undoSpec))
-        {
-            if (!_hotkey.TryRegisterUndo(undoSpec))
-            {
-                _log.Warn($"取り消しホットキー {undoSpec} は他のアプリと衝突しているため登録できませんでした");
-                ToastWindow.Show($"取り消しのホットキー {undoSpec} は他のアプリと衝突しているため使えません。設定画面から変更してください。", ToastKind.Warning);
-            }
-        }
+        SyncUndoHotkey(_settings.Current, "設定画面から変更してください。");
 
-        // 設定変更（操作方式）を即座にホットキー側へ反映する
+        // 設定変更（ホットキーの動作、取り消しのオン/オフ）を即座にホットキー側へ反映する
         _settings.Changed += s =>
             Dispatcher.BeginInvoke(() =>
             {
-                if (_hotkey != null) _hotkey.PushToTalk = s.HotkeyMode == HotkeyMode.PushToTalk;
+                if (_hotkey == null) return;
+                _hotkey.PushToTalk = s.HotkeyMode == HotkeyMode.PushToTalk;
+                SyncUndoHotkey(s, "設定画面から変更してください。");
             });
 
         // 初期化・復元で設定が丸ごと変わったときは、ホットキーやスタートアップ登録もその場で合わせ直す
@@ -306,11 +398,13 @@ public partial class App : Application
             _log.Warn($"スタートアップ登録の同期に失敗しました: {ex.Message}");
         }
 
-        // 初回起動ガイド
+        // 初回起動ガイド。どこにいるのか（トレイ）と、最初にすることを伝える
         if (!_settings.Current.FirstRunDone)
         {
             _settings.Update(s => s.FirstRunDone = true);
-            ToastWindow.Show($"VoiceDock へようこそ。テキスト入力欄にカーソルを置き、{_settings.Current.Hotkey} を押して話すと文字が入力されます。");
+            ToastWindow.Show($"VoiceDock へようこそ。文字を入れたい場所にカーソルを置き、{_settings.Current.Hotkey} を押して話すと入力されます。" +
+                             "設定は、画面右下（タスクトレイ）のマイクのアイコンを右クリックして開けます。",
+                ToastKind.Info, onClick: ShowSettings, actionHint: "クリックすると設定を開きます");
         }
 
         // 更新で再起動した直後は、更新できたことを知らせる（自動で入れ替えた場合、利用者は再起動に気づいていない）
@@ -330,6 +424,7 @@ public partial class App : Application
                 _ = CheckForUpdateAsync(manual: false);
         };
         _periodicUpdateCheckTimer.Start();
+        _started = true;
     }
 
     /// <summary>
@@ -378,7 +473,7 @@ public partial class App : Application
             if (!manual)
             {
                 _pendingUpdate = info;
-                _tray?.SetUpdateAvailable(true);
+                _tray?.SetUpdateAvailable(true, info.Version.ToString());
 
                 // 自動で入れ替える設定なら、画面は出さずに裏でダウンロードし、使っていないときに入れ替える
                 if (_settings!.Current.AutoApplyUpdate && UpdateService.CanWriteToInstallDir(out _))
@@ -386,9 +481,18 @@ public partial class App : Application
                     _ = PrepareAutoUpdateAsync(info);
                     return;
                 }
+
+                // 話している最中に画面を出すと、入力先からフォーカスを奪って文字が入らなくなる。
+                // 音声入力中は通知だけにし、トレイメニューのいちばん上からいつでも開けるようにしておく
+                if (_controller is { IsListening: true })
+                {
+                    ToastWindow.Show($"新しい版 v{info.Version} があります。トレイメニューから更新できます。",
+                        ToastKind.Info, onClick: () => ShowUpdateWindow(info), actionHint: "クリックすると更新の画面を開きます");
+                    return;
+                }
             }
 
-            ShowUpdateWindow(info);
+            ShowUpdateWindow(info, activate: manual);
         });
     }
 
@@ -417,7 +521,12 @@ public partial class App : Application
         catch (Exception ex)
         {
             _log?.Warn($"新しい版を裏でダウンロードできませんでした。更新画面で知らせます: {ex.Message}");
-            ShowUpdateWindow(info);
+            // 作業中のアプリからフォーカスを奪わない。話している最中は通知だけにする
+            if (_controller is { IsListening: true })
+                ToastWindow.Show($"新しい版 v{info.Version} があります。トレイメニューから更新できます。",
+                    ToastKind.Info, onClick: () => ShowUpdateWindow(info), actionHint: "クリックすると更新の画面を開きます");
+            else
+                ShowUpdateWindow(info, activate: false);
         }
         finally
         {
@@ -440,7 +549,11 @@ public partial class App : Application
         var file = _preparedUpdateFile;
         if (info == null || file == null || !System.IO.File.Exists(file))
         {
+            // 用意したファイルが消えていた（一時フォルダの掃除など）。用意し直せるよう、覚えを消す
+            // （残したままだと、定期的な確認が「用意済み」と見なして二度と走らない）
             _idleUpdateTimer?.Stop();
+            _preparedUpdate = null;
+            _preparedUpdateFile = null;
             return;
         }
         // 途中で設定をオフにした場合は、更新画面での確認に戻す
@@ -463,25 +576,32 @@ public partial class App : Application
         bool applied = await Task.Run(() => _updater.ApplyUpdate(file));
         if (applied)
         {
-            ExitApplication();
+            ExitApplication(force: true);
             return;
         }
 
         // 入れ替えに失敗した場合は元の版のまま動いている。更新画面から手動で更新できるようにする
         _preparedUpdate = null;
         _preparedUpdateFile = null;
-        ToastWindow.Show("新しい版へ自動で入れ替えられませんでした。トレイメニューの「更新を確認」から更新してください。", ToastKind.Warning);
+        ToastWindow.Show("新しい版へ自動で入れ替えられませんでした。トレイメニューのいちばん上から更新してください。", ToastKind.Warning);
     }
 
-    private void ShowUpdateWindow(UpdateInfo info)
+    /// <param name="activate">
+    /// 画面を前面に出してキー入力を受け取るか。自動の確認で見つけたときは false
+    /// （作業中のアプリからフォーカスを奪わない）。
+    /// </param>
+    private void ShowUpdateWindow(UpdateInfo info, bool activate = true)
     {
         if (_updater == null) return;
         if (_updateWindow is { IsLoaded: true })
         {
-            _updateWindow.Activate();
+            if (activate) _updateWindow.Activate();
             return;
         }
-        var window = new UpdateWindow(_updater, info, _settings!, ExitApplication);
+        var window = new UpdateWindow(_updater, info, _settings!, () => ExitApplication(force: true))
+        {
+            ShowActivated = activate,
+        };
         window.Closed += (_, _) =>
         {
             // 「この版はスキップ」を選んだら、保留中の案内とトレイの印も取り下げる
@@ -494,7 +614,78 @@ public partial class App : Application
         };
         _updateWindow = window;
         _updateWindow.Show();
-        _updateWindow.Activate();
+        if (activate) _updateWindow.Activate();
+    }
+
+    /// <summary>ホットキーをトレイメニューに表示する。</summary>
+    private void UpdateTrayHotkeys(AppSettings s) =>
+        _tray?.SetHotkeys(s.Hotkey, s.UndoEnabled ? s.UndoHotkey : null);
+
+    /// <summary>
+    /// 取り消しのホットキーの登録を、設定（オン/オフとキー）に合わせる。
+    /// 設定が前回と同じなら何もしない（設定を変えるたびに登録し直して、同じ警告を繰り返さないため）。
+    /// </summary>
+    private void SyncUndoHotkey(AppSettings s, string advice)
+    {
+        if (_hotkey == null) return;
+        var wanted = s.UndoEnabled ? s.UndoHotkey : "";
+        if (wanted == _undoHotkeyApplied) return;
+        _undoHotkeyApplied = wanted;
+
+        if (wanted.Length == 0 || !HotkeySpec.TryParse(wanted, out var undoSpec))
+        {
+            // 取り消しをオフにしたら、キーを他のアプリへ返す
+            _hotkey.UnregisterUndo();
+            return;
+        }
+        if (_hotkey.TryRegisterUndo(undoSpec)) return;
+        _log?.Warn($"取り消しホットキー {undoSpec} は他のアプリと衝突しているため登録できませんでした");
+        ToastWindow.Show($"取り消しのホットキー {undoSpec} は他のアプリと衝突しているため使えません。{advice}", ToastKind.Warning);
+    }
+
+    /// <summary>設定・辞書・ログの保存先をエクスプローラーで開く。</summary>
+    private void OpenDataFolder()
+    {
+        try
+        {
+            AppPaths.EnsureDirectories();
+            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+            {
+                FileName = AppPaths.Root,
+                UseShellExecute = true,
+            });
+        }
+        catch (Exception ex)
+        {
+            _log?.Warn($"保存先のフォルダーを開けませんでした: {ex.Message}");
+            ToastWindow.Show($"保存先を開けませんでした。場所: {AppPaths.Root}", ToastKind.Warning);
+        }
+    }
+
+    /// <summary>使い方のページ（README）を既定のブラウザで開く。</summary>
+    private void OpenHelp()
+    {
+        const string url = "https://github.com/Yu5rin/VoiceDock#readme";
+        try
+        {
+            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo { FileName = url, UseShellExecute = true });
+        }
+        catch (Exception ex)
+        {
+            _log?.Warn($"使い方のページを開けませんでした: {ex.Message}");
+            ToastWindow.Show($"使い方のページを開けませんでした。{url}", ToastKind.Warning);
+        }
+    }
+
+    private void ShowAbout()
+    {
+        MessageDialog.Show(null, "VoiceDock について",
+            $"VoiceDock v{UpdateService.CurrentVersion}\n\n" +
+            "話した言葉を、いま使っているアプリの入力欄へそのまま入力する、Windows 用の音声入力ツールです。\n\n" +
+            $"データの保存先:\n{AppPaths.Root}\n\n" +
+            "ライセンス: MIT License\n" +
+            "https://github.com/Yu5rin/VoiceDock",
+            MessageDialogKind.Info, "閉じる");
     }
 
     /// <summary>
@@ -513,16 +704,9 @@ public partial class App : Application
             if (HotkeySpec.TryParse(s.Hotkey, out var spec) && !_hotkey.TryRegister(spec))
                 ToastWindow.Show($"ホットキー {spec} は他のアプリと衝突しているため登録できませんでした。", ToastKind.Warning);
 
-            if (s.UndoEnabled && HotkeySpec.TryParse(s.UndoHotkey, out var undoSpec))
-            {
-                if (!_hotkey.TryRegisterUndo(undoSpec))
-                    ToastWindow.Show($"取り消しのホットキー {undoSpec} は他のアプリと衝突しているため使えません。", ToastKind.Warning);
-            }
-            else
-            {
-                // 復元した設定で取り消しが無効なら、前の登録が残らないよう解除する
-                _hotkey.UnregisterUndo();
-            }
+            // 丸ごと変わったので、前回と同じキーでも登録し直す
+            _undoHotkeyApplied = "\0";
+            SyncUndoHotkey(s, "");
         }
 
         try
@@ -534,8 +718,8 @@ public partial class App : Application
             _log?.Warn($"スタートアップ登録の同期に失敗しました: {ex.Message}");
         }
 
-        // 使用ブラウザの指定も変わりうるため、認識用ブラウザを開き直す
-        _browser?.Restart();
+        // 使用ブラウザの指定も変わりうるため、認識用ブラウザを開き直す（画面を止めないよう裏で行う）
+        if (_browser != null) RestartBrowser(announce: false);
     }
 
     /// <summary>設定画面からのホットキー変更。衝突時は元のホットキーへ復元し false を返す。</summary>
@@ -580,16 +764,45 @@ public partial class App : Application
         }
         _settingsWindow = new SettingsWindow(_settings, ApplyHotkey, ApplyUndoHotkey,
             ShowDictionary, ShowSnippets, ShowAppRules, () => _ = CheckForUpdateAsync(manual: true),
-            RestartBrowser, () => _bridge?.CurrentMicrophone, _backup!, RestoreBackup, _bridge);
+            RestartBrowser, () => _bridge?.CurrentMicrophone, _backup!, RestoreBackup, _bridge,
+            SetHotkeyCapture, OpenDataFolder, ReopenSettings);
         _settingsWindow.Show();
         _settingsWindow.Activate();
+    }
+
+    /// <summary>設定を初期化・復元した後、新しい内容で設定画面を開き直す。</summary>
+    private void ReopenSettings()
+    {
+        _settingsWindow = null;
+        Dispatcher.BeginInvoke(ShowSettings, DispatcherPriority.ApplicationIdle);
+    }
+
+    /// <summary>
+    /// 設定画面でホットキーの入力を待っている間、登録しているホットキーを止める。
+    /// 止めないと、いまのホットキーを押し直したときに音声入力が始まってしまう。
+    /// </summary>
+    private void SetHotkeyCapture(bool capturing)
+    {
+        if (_hotkey == null || _settings == null) return;
+        if (capturing)
+        {
+            _hotkey.Unregister();
+            _hotkey.UnregisterUndo();
+            return;
+        }
+        var s = _settings.Current;
+        if (HotkeySpec.TryParse(s.Hotkey, out var spec)) _hotkey.TryRegister(spec);
+        if (s.UndoEnabled && HotkeySpec.TryParse(s.UndoHotkey, out var undoSpec)) _hotkey.TryRegisterUndo(undoSpec);
+        _undoHotkeyApplied = s.UndoEnabled ? s.UndoHotkey : "";
     }
 
     /// <summary>
     /// 認識用ブラウザを起動し直す。使用ブラウザの設定を変えたときや、
     /// 再起動を諦めて止まってしまった状態から復帰させるときに使う。
     /// </summary>
-    private async void RestartBrowser()
+    private void RestartBrowser() => RestartBrowser(announce: true);
+
+    private async void RestartBrowser(bool announce)
     {
         if (_browser == null)
         {
@@ -601,13 +814,23 @@ public partial class App : Application
         // その間に監視が重ねて再起動しないよう、再起動した時刻を先に記録する
         _lastRelaunchUtc = DateTime.UtcNow;
         var browser = _browser;
-        bool restarted = await Task.Run(() => browser.Restart());
+        if (announce) ToastWindow.Show("認識エンジンを再起動しています…");
+        bool restarted;
+        try
+        {
+            restarted = await Task.Run(() => browser.Restart());
+        }
+        catch (Exception ex)
+        {
+            _log?.Error($"認識用ブラウザの再起動に失敗しました: {ex}");
+            restarted = false;
+        }
+        _lastRelaunchUtc = DateTime.UtcNow;
         if (restarted)
         {
-            // 諦めて止めたウォッチドッグを動かし直す
-            _watchdog?.Start();
-            _tray?.SetState(TrayState.Idle);
-            ToastWindow.Show($"認識用ブラウザを起動し直しました（{_browser.LaunchedBrowserName}）。");
+            _gaveUpNotified = false;
+            _tray?.SetState(_controller is { IsListening: true } ? TrayState.Recording : TrayState.Idle);
+            if (announce) ToastWindow.Show($"認識エンジンを再起動しました（{_browser.LaunchedBrowserName}）。");
         }
         else
         {
@@ -761,8 +984,24 @@ public partial class App : Application
         _logWindow.Activate();
     }
 
-    private void ExitApplication()
+    private void ExitApplication() => ExitApplication(force: false);
+
+    /// <param name="force">
+    /// 更新で入れ替えた直後は true（もう後戻りできないため、必ず終了する）。
+    /// トレイからの終了では、保存していない入力がある画面で「キャンセル」を選んだら終了を取りやめる。
+    /// </param>
+    private void ExitApplication(bool force)
     {
+        if (!force)
+        {
+            // Shutdown は、画面の「閉じるのをやめる」を無視して終了してしまう。
+            // 先に 1 つずつ閉じて、取りやめられたら終了しない
+            foreach (var window in new Window?[] { _dictionaryWindow, _snippetWindow, _appRulesWindow, _settingsWindow })
+            {
+                if (!TryCloseWindow(window)) return;
+            }
+        }
+        WindowBehavior.ForceClosing = force;
         _log?.Info("VoiceDock を終了します");
         Shutdown();
     }

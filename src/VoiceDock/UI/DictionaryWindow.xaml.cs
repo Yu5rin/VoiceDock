@@ -35,7 +35,7 @@ public partial class DictionaryWindow : Window
     public DictionaryWindow(DictionaryService dictionary, LogService log)
     {
         InitializeComponent();
-        AppTheme.ApplyToWindow(this);
+        WindowBehavior.Attach(this, "Dictionary");
         _dictionary = dictionary;
         _log = log;
 
@@ -63,6 +63,11 @@ public partial class DictionaryWindow : Window
     /// </summary>
     public void PrefillWrong(string text)
     {
+        // 書きかけの内容を黙って消さない
+        if (HasUnsavedInput() && !ConfirmDiscard()) return;
+        _loadingForm = true;
+        Grid.UnselectAll();
+        _loadingForm = false;
         ClearForm();
         WrongBox.Text = text.Trim();
         WrongBox.Focus();
@@ -87,7 +92,9 @@ public partial class DictionaryWindow : Window
 
     private void New_Click(object sender, RoutedEventArgs e)
     {
+        _loadingForm = true;
         Grid.UnselectAll();
+        _loadingForm = false;
         ClearForm();
         WrongBox.Focus();
     }
@@ -117,12 +124,13 @@ public partial class DictionaryWindow : Window
                                                   KanaNormalizer.NormalizeKey(r.Wrong) == key);
         if (duplicate != null)
         {
-            var answer = MessageBox.Show(this,
+            bool replace = MessageDialog.Show(this, "同じ読みの登録があります",
                 $"「{duplicate.Wrong} → {duplicate.Correct}」が既に登録されています。\n" +
-                "（ひらがな・カタカナの違いは同じ語として扱います）\n\n" +
+                "（ひらがな・カタカナの違いは同じ言葉として扱います）\n\n" +
                 $"「{correct}」に置き換えますか？",
-                "同じ読みの登録があります", MessageBoxButton.YesNo, MessageBoxImage.Question, MessageBoxResult.No);
-            if (answer != MessageBoxResult.Yes) return;
+                MessageDialogKind.Warning, "置き換える", "キャンセル");
+            if (!replace) return;
+            _loadingForm = true;   // 自分で一覧を書き換える間は、選択の変化に反応しない
             _rows.Remove(duplicate);
         }
 
@@ -135,14 +143,20 @@ public partial class DictionaryWindow : Window
             entry.LastUsed = previous.LastUsed;
         }
         bool updated = _editing != null;
+        _loadingForm = true;   // 自分で一覧を書き換える間は、選択の変化に反応しない（最後の ClearForm で戻る）
         if (_editing != null && _rows.IndexOf(_editing) is var index and >= 0)
             _rows[index] = entry;
         else
             _rows.Add(entry);
 
         Persist();
+        ForgetDeleted();
+        _loadingForm = true;
         Grid.UnselectAll();
+        _loadingForm = false;
         ClearForm();
+        // 検索で絞り込んでいると、いま登録した項目が一覧に出ず、登録できたのか分からない
+        if (!MatchesSearch(entry)) SearchBox.Text = "";
         Grid.ScrollIntoView(entry);
         FormStatus.Text = updated || duplicate != null
             ? $"「{wrong} → {correct}」に更新しました。"
@@ -171,7 +185,7 @@ public partial class DictionaryWindow : Window
         CorrectBox.Text = entry.Correct;
         WholeOnlyCheck.IsChecked = entry.WholeOnly;
         PrimaryButton.Content = "更新";
-        FormStatus.Text = "選択した項目を編集しています。［新規入力］で新しく登録する状態に戻ります。";
+        FormStatus.Text = "選んだ項目を書き直せます。新しく登録するときは［入力欄を空にする］を押してください。";
         _loadingForm = false;
     }
 
@@ -187,9 +201,50 @@ public partial class DictionaryWindow : Window
 
     // ───────────── 一覧 ─────────────
 
+    /// <summary>入力欄の、まだ登録していない内容を捨ててよいかを確かめる。</summary>
+    private bool ConfirmDiscard() =>
+        MessageDialog.Show(this, "登録していない入力があります",
+            "入力欄の内容は、まだ登録されていません。登録せずに捨てますか？",
+            MessageDialogKind.Warning, "捨てる", "入力に戻る");
+
     private void Grid_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
+        DeleteButton.IsEnabled = Grid.SelectedItems.Count > 0;
         if (_loadingForm) return;
+
+        // 書きかけの内容があるのに別の項目を選んだら、黙って上書きせずに確かめる
+        bool wouldReplaceForm = Grid.SelectedItems.Count <= 1 && !ReferenceEquals(Grid.SelectedItem, _editing);
+        if (wouldReplaceForm && HasUnsavedInput())
+        {
+            // 確かめるのは、表が選択の処理を終えてから（処理の途中で選択を戻すと、色の付く行と実際の選択がずれる）
+            if (_confirmPending) return;
+            _confirmPending = true;
+            Dispatcher.BeginInvoke(() =>
+            {
+                _confirmPending = false;
+                if (!HasUnsavedInput() || ConfirmDiscard())
+                {
+                    ApplySelectionToForm();
+                    return;
+                }
+                _loadingForm = true;
+                if (_editing != null && _rows.Contains(_editing)) Grid.SelectedItem = _editing;
+                else Grid.UnselectAll();
+                _loadingForm = false;
+                DeleteButton.IsEnabled = Grid.SelectedItems.Count > 0;
+            });
+            return;
+        }
+        ApplySelectionToForm();
+    }
+
+    /// <summary>捨ててよいかの確認を出す予約をしているか（重ねて出さないため）。</summary>
+    private bool _confirmPending;
+
+    /// <summary>一覧で選んだ項目を入力欄へ読み込む（1 件だけ選んだとき）。選択が無くなったら入力欄を空にする。</summary>
+    private void ApplySelectionToForm()
+    {
+
         // 1 件だけ選んだときに、その内容をフォームへ読み込んで編集できるようにする
         if (Grid.SelectedItems.Count == 1 && Grid.SelectedItem is DictionaryEntry entry)
             LoadIntoForm(entry);
@@ -259,6 +314,31 @@ public partial class DictionaryWindow : Window
 
     private void DeleteRows_Click(object sender, RoutedEventArgs e) => DeleteSelectedRows();
 
+    private void Paste_Click(object sender, RoutedEventArgs e) => PasteFromClipboard();
+
+    /// <summary>いま削除した項目（元に戻せるように、元の位置と一緒に覚えておく）。</summary>
+    private List<(int Index, DictionaryEntry Entry)> _deleted = new();
+
+    private void ForgetDeleted()
+    {
+        _deleted = new();
+        UndoDeleteButton.Visibility = Visibility.Collapsed;
+    }
+
+    private void UndoDelete_Click(object sender, RoutedEventArgs e)
+    {
+        if (_deleted.Count == 0) return;
+        foreach (var (index, entry) in _deleted.OrderBy(d => d.Index))
+            _rows.Insert(Math.Min(index, _rows.Count), entry);
+        int count = _deleted.Count;
+        var first = _deleted[0].Entry;
+        ForgetDeleted();
+        Persist();
+        FormStatus.Text = count == 1 ? $"「{first.Wrong} → {first.Correct}」を元に戻しました。" : $"{count} 件を元に戻しました。";
+        Grid.ScrollIntoView(first);
+        RefreshTry();
+    }
+
     private void DeleteSelectedRows()
     {
         var targets = Grid.SelectedItems.OfType<DictionaryEntry>().ToList();
@@ -268,17 +348,23 @@ public partial class DictionaryWindow : Window
             return;
         }
 
-        // 複数件を一度に消す場合は、取り消せないため確認する
-        if (targets.Count > 1)
-        {
-            var answer = MessageBox.Show(this, $"選択した {targets.Count} 件を削除します。この操作は取り消せません。",
-                "辞書の削除", MessageBoxButton.OKCancel, MessageBoxImage.Warning, MessageBoxResult.Cancel);
-            if (answer != MessageBoxResult.OK) return;
-        }
+        // 複数件を一度に消す場合は、消す前に確かめる
+        if (targets.Count > 1 &&
+            !MessageDialog.Show(this, "辞書の削除", $"選んだ {targets.Count} 件を削除します。",
+                MessageDialogKind.Danger, "削除する", "キャンセル"))
+            return;
 
+        _deleted = targets.Select(t => (_rows.IndexOf(t), t)).ToList();
+        // 自分で一覧を書き換える間は、選択の変化を「別の項目を選んだ」と取り違えない
+        _loadingForm = true;
         foreach (var t in targets) _rows.Remove(t);
         Persist();
+        _loadingForm = true;
+        Grid.UnselectAll();
+        _loadingForm = false;
         ClearForm();
+        UndoDeleteButton.Visibility = Visibility.Visible;
+        DeleteButton.IsEnabled = Grid.SelectedItems.Count > 0;
         FormStatus.Text = targets.Count == 1
             ? $"「{targets[0].Wrong} → {targets[0].Correct}」を削除しました。"
             : $"{targets.Count} 件を削除しました。";
@@ -291,8 +377,13 @@ public partial class DictionaryWindow : Window
     /// </summary>
     private void PasteFromClipboard()
     {
-        if (!Clipboard.ContainsText()) return;
+        if (!Clipboard.ContainsText())
+        {
+            FormStatus.Text = "クリップボードに文字がありません。Excel で、読みと表記の 2 列をコピーしてから押してください。";
+            return;
+        }
         int added = 0, updated = 0;
+        _loadingForm = true;   // 自分で一覧を書き換える間は、選択の変化に反応しない
 
         foreach (var lineRaw in Clipboard.GetText().Split('\n'))
         {
@@ -319,12 +410,14 @@ public partial class DictionaryWindow : Window
             }
         }
 
+        _loadingForm = false;
         if (added + updated == 0)
         {
-            FormStatus.Text = "貼り付けられる内容がありませんでした（Excel の 2 列をコピーしてください）。";
+            FormStatus.Text = "貼り付けられる内容がありませんでした（Excel で、読みと表記の 2 列をコピーしてください）。";
             return;
         }
         Persist();
+        ForgetDeleted();
         ClearForm();
         FormStatus.Text = updated > 0 ? $"{added} 件を追加、{updated} 件を更新しました。" : $"{added} 件を追加しました。";
         RefreshTry();
@@ -362,17 +455,20 @@ public partial class DictionaryWindow : Window
         if (dialog.ShowDialog(this) != true) return;
 
         // 既存の内容をすべて置き換えるため、取り消しがきかない。実行前に確認する
-        var answer = MessageBox.Show(this,
-            $"現在登録されている {_rows.Count} 件をすべて削除し、選択したファイルの内容に置き換えます。\n" +
-            "この操作は取り消せません。続けますか？",
-            "CSV から読み込む", MessageBoxButton.OKCancel, MessageBoxImage.Warning, MessageBoxResult.Cancel);
-        if (answer != MessageBoxResult.OK) return;
+        if (_rows.Count > 0 &&
+            !MessageDialog.Show(this, "CSV から読み込む",
+                $"いま登録されている {_rows.Count} 件をすべて消して、選んだファイルの内容に置き換えます。\n" +
+                "この操作は取り消せません。",
+                MessageDialogKind.Danger, "置き換える", "キャンセル"))
+            return;
 
         try
         {
             int count = _dictionary.ImportCsv(dialog.FileName);
+            _loadingForm = true;   // 自分で一覧を書き換える間は、選択の変化に反応しない（ClearForm で戻る）
             _rows.Clear();
             foreach (var entry in _dictionary.Entries) _rows.Add(entry);
+            ForgetDeleted();
             ClearForm();
             ToastWindow.Show($"辞書を CSV から読み込みました（{count} 件）。");
             RefreshTry();
@@ -408,10 +504,11 @@ public partial class DictionaryWindow : Window
 
     private void Window_Closing(object sender, CancelEventArgs e)
     {
-        if (!HasUnsavedInput()) return;
-        var answer = MessageBox.Show(this,
-            "入力欄の内容はまだ登録されていません。登録せずに閉じますか？",
-            "辞書管理", MessageBoxButton.OKCancel, MessageBoxImage.Question, MessageBoxResult.Cancel);
-        if (answer != MessageBoxResult.OK) e.Cancel = true;
+        // 更新で入れ替えた後の終了は取りやめられないので、答えを生かせない確認は出さない
+        if (!HasUnsavedInput() || WindowBehavior.ForceClosing) return;
+        if (!MessageDialog.Show(this, "登録していない入力があります",
+                "入力欄の内容は、まだ登録されていません。登録せずに閉じますか？",
+                MessageDialogKind.Warning, "登録せずに閉じる", "入力に戻る"))
+            e.Cancel = true;
     }
 }

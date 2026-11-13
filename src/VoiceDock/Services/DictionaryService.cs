@@ -67,7 +67,7 @@ public sealed class DictionaryService
                 if (fromBackup)
                     _log.Warn("辞書ファイルが壊れていたため、バックアップから復帰しました");
                 lock (_sync)
-                    _entries = JsonSerializer.Deserialize<List<DictionaryEntry>>(json, JsonOptions) ?? new();
+                    _entries = Sanitize(JsonSerializer.Deserialize<List<DictionaryEntry>>(json, JsonOptions));
             }
             else if (File.Exists(AppPaths.DictionaryFile))
             {
@@ -83,8 +83,25 @@ public sealed class DictionaryService
         }
     }
 
+    /// <summary>
+    /// 手で編集したファイルやバックアップに null の項目・null の文字列があっても、後の処理で落ちないようにする。
+    /// </summary>
+    private static List<DictionaryEntry> Sanitize(IEnumerable<DictionaryEntry?>? entries)
+    {
+        var list = new List<DictionaryEntry>();
+        foreach (var e in entries ?? Enumerable.Empty<DictionaryEntry?>())
+        {
+            if (e == null) continue;
+            e.Wrong ??= "";
+            e.Correct ??= "";
+            list.Add(e);
+        }
+        return list;
+    }
+
     public void Replace(IEnumerable<DictionaryEntry> entries)
     {
+        entries = Sanitize(entries);
         lock (_sync)
         {
             // 辞書画面は開いた時点の複製を持っているため、その後の音声入力で増えた使用回数を

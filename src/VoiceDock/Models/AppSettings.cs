@@ -56,6 +56,19 @@ public enum CharacterWidth
     Full,
 }
 
+/// <summary>音声入力中の表示（オーバーレイ）を出す位置。</summary>
+public enum OverlayPosition
+{
+    /// <summary>画面の下・中央（既定）</summary>
+    BottomCenter,
+    /// <summary>画面の上・中央。チャットの入力欄など、画面の下で入力するときに隠れないようにする</summary>
+    TopCenter,
+    /// <summary>画面の右下</summary>
+    BottomRight,
+    /// <summary>表示しない（トレイのアイコンの色と操作音だけで知らせる）</summary>
+    Hidden,
+}
+
 /// <summary>ホットキーの操作方式。</summary>
 public enum HotkeyMode
 {
@@ -204,6 +217,14 @@ public class AppSettings
     /// <summary>録音開始/停止時に操作音を鳴らす</summary>
     public bool SoundFeedback { get; set; } = true;
 
+    /// <summary>音声入力中の表示（オーバーレイ）を出す位置。</summary>
+    public OverlayPosition OverlayPosition { get; set; } = OverlayPosition.BottomCenter;
+
+    /// <summary>
+    /// 各画面の位置と大きさ（画面の名前 → "左,上,幅,高さ"）。開き直したときに前回の場所へ戻すために使う。
+    /// </summary>
+    public Dictionary<string, string> WindowPlacements { get; set; } = new();
+
     /// <summary>
     /// 認識したテキストをログファイルに保存する。
     ///
@@ -238,6 +259,7 @@ public class AppSettings
         // 参照型は複製しないと、コピー元と同じ辞書を共有してしまう
         clone.AppInputMethods = new Dictionary<string, InputMethod>(AppInputMethods, StringComparer.OrdinalIgnoreCase);
         clone.AppNewlineModes = new Dictionary<string, NewlineMode>(AppNewlineModes, StringComparer.OrdinalIgnoreCase);
+        clone.WindowPlacements = new Dictionary<string, string>(WindowPlacements);
         return clone;
     }
 }

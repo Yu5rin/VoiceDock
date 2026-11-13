@@ -22,7 +22,7 @@ public partial class LogWindow : Window
     public LogWindow(LogService log)
     {
         InitializeComponent();
-        AppTheme.ApplyToWindow(this);
+        WindowBehavior.Attach(this, "Log");
         _log = log;
 
         foreach (var label in new[] { "すべて", "認識のみ", "エラー・警告のみ", "動作のみ" })
@@ -52,8 +52,9 @@ public partial class LogWindow : Window
 
             if (Matches(entry))
             {
-                LogList.Items.Add(entry.ToString());
-                ScrollToEnd();
+                LogList.Items.Add(MakeItem(entry));
+                // 行を選んで読んでいる最中は、新しい行が来ても勝手に動かさない
+                if (LogList.SelectedItems.Count == 0) ScrollToEnd();
             }
             UpdateEmptyState();
         });
@@ -71,10 +72,21 @@ public partial class LogWindow : Window
     {
         LogList.Items.Clear();
         foreach (var e in _entries.Where(Matches))
-            LogList.Items.Add(e.ToString());
+            LogList.Items.Add(MakeItem(e));
         UpdateEmptyState();
         ScrollToEnd();
     }
+
+    /// <summary>1 行ぶんの表示。エラーと警告は色で見分けられるようにする。</summary>
+    private ListBoxItem MakeItem(LogEntry entry)
+    {
+        var item = new ListBoxItem { Content = entry.ToString() };
+        if (entry.Level == LogLevel.Error) item.Foreground = (System.Windows.Media.Brush)FindResource("DangerBrush");
+        else if (entry.Level == LogLevel.Warn) item.Foreground = (System.Windows.Media.Brush)FindResource("WarnBrush");
+        return item;
+    }
+
+    private static string? TextOf(object item) => (item as ListBoxItem)?.Content?.ToString() ?? item.ToString();
 
     private void UpdateEmptyState()
     {
@@ -82,15 +94,15 @@ public partial class LogWindow : Window
         EmptyText.Visibility = empty ? Visibility.Visible : Visibility.Collapsed;
         EmptyText.Text = _entries.Count == 0
             ? "まだログがありません。音声入力を使うとここに記録されます。"
-            : "この種別に該当するログがありません。";
+            : "この種類のログはありません。";
     }
 
     private void DeleteLogs_Click(object sender, RoutedEventArgs e)
     {
-        var answer = MessageBox.Show(this,
-            "保存されているログファイルをすべて削除します。この操作は取り消せません。続けますか？",
-            "ログの削除", MessageBoxButton.OKCancel, MessageBoxImage.Warning, MessageBoxResult.Cancel);
-        if (answer != MessageBoxResult.OK) return;
+        if (!MessageDialog.Show(this, "ログをすべて消す",
+                "保存されているログファイルをすべて消します。この操作は取り消せません。",
+                MessageDialogKind.Danger, "すべて消す", "キャンセル"))
+            return;
 
         int deleted = _log.DeleteAllLogFiles();
         _log.ClearMemory();
@@ -109,8 +121,9 @@ public partial class LogWindow : Window
     private void CopySelected_Click(object sender, RoutedEventArgs e)
     {
         var lines = LogList.SelectedItems.Count > 0
-            ? LogList.SelectedItems.Cast<object>().Select(o => o.ToString())
-            : LogList.Items.Cast<object>().Select(o => o.ToString());
+            // 選んだ順ではなく、表示されている順にコピーする
+            ? LogList.Items.Cast<object>().Where(o => LogList.SelectedItems.Contains(o)).Select(TextOf)
+            : LogList.Items.Cast<object>().Select(TextOf);
         var text = string.Join(Environment.NewLine, lines);
         if (text.Length == 0) return;
         try
@@ -118,7 +131,7 @@ public partial class LogWindow : Window
             Clipboard.SetDataObject(text, true);
             ToastWindow.Show(LogList.SelectedItems.Count > 0
                 ? $"{LogList.SelectedItems.Count} 行をコピーしました。"
-                : "表示中の全行をコピーしました。");
+                : $"表示中の {LogList.Items.Count} 行をすべてコピーしました。");
         }
         catch (Exception ex)
         {

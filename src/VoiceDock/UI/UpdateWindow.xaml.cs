@@ -32,24 +32,24 @@ public partial class UpdateWindow : Window
     public UpdateWindow(UpdateService updater, UpdateInfo info, SettingsService settings, Action shutdown)
     {
         InitializeComponent();
-        AppTheme.ApplyToWindow(this);
+        WindowBehavior.Attach(this, "Update", closeOnEscape: false);   // Esc は「あとで」ボタン（IsCancel）が受ける
         _updater = updater;
         _info = info;
         _settings = settings;
         _shutdown = shutdown;
 
-        VersionText.Text = $"現在のバージョン {UpdateService.CurrentVersion} → 新しいバージョン {info.Version}";
+        VersionText.Text = $"いまの版 v{UpdateService.CurrentVersion} → 新しい版 v{info.Version}　　更新すると、VoiceDock が自動で再起動します";
         NotesText.Text = info.ReleaseNotes.Length > 0
             ? FormatReleaseNotes(info.ReleaseNotes)
-            : "（リリースノートはありません）";
+            : "（変更点の説明はありません）";
 
         // 書き込みできない場所（Program Files 等）に置かれている場合は自動更新できない
         if (!UpdateService.CanWriteToInstallDir(out var dir))
         {
             UpdateButton.IsEnabled = false;
             StatusText.Visibility = Visibility.Visible;
-            StatusText.Text = $"このフォルダには書き込めないため、自動更新できません（{dir}）。" +
-                              "リリースページから手動で差し替えてください。";
+            StatusText.Text = $"VoiceDock.exe のあるフォルダーに書き込めないため、ここからは更新できません（{dir}）。" +
+                              "［配布ページを開く］から新しい exe をダウンロードして、差し替えてください。";
         }
     }
 
@@ -90,7 +90,7 @@ public partial class UpdateWindow : Window
 
             StatusText.Text = "更新に失敗しました。元のバージョンのまま動作しています。";
             Progress.Visibility = Visibility.Collapsed;
-            ToastWindow.Show("更新に失敗しました。リリースページから手動で差し替えてください。", ToastKind.Error);
+            ToastWindow.Show("更新に失敗しました。［配布ページを開く］から新しい exe をダウンロードして、差し替えてください。", ToastKind.Error);
         }
         catch (OperationCanceledException)
         {
@@ -160,7 +160,7 @@ public partial class UpdateWindow : Window
     {
         _settings.Update(s => s.SkippedVersion = _info.Version.ToString());
         Skipped = true;
-        ToastWindow.Show($"バージョン {_info.Version} は今後お知らせしません。手動での確認はいつでもできます。");
+        ToastWindow.Show($"v{_info.Version} は、今後お知らせしません。トレイメニューの「ヘルプ → 更新を確認」からは、いつでも更新できます。");
         Close();
     }
 

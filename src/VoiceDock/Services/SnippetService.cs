@@ -69,7 +69,7 @@ public sealed class SnippetService
                 if (fromBackup)
                     _log.Warn("定型文ファイルが壊れていたため、バックアップから復帰しました");
                 lock (_sync)
-                    _entries = JsonSerializer.Deserialize<List<SnippetEntry>>(json, JsonOptions) ?? new();
+                    _entries = Sanitize(JsonSerializer.Deserialize<List<SnippetEntry>>(json, JsonOptions));
             }
             else if (File.Exists(AppPaths.SnippetsFile))
             {
@@ -84,8 +84,25 @@ public sealed class SnippetService
         }
     }
 
+    /// <summary>
+    /// 手で編集したファイルやバックアップに null の項目・null の文字列があっても、後の処理で落ちないようにする。
+    /// </summary>
+    private static List<SnippetEntry> Sanitize(IEnumerable<SnippetEntry?>? entries)
+    {
+        var list = new List<SnippetEntry>();
+        foreach (var e in entries ?? Enumerable.Empty<SnippetEntry?>())
+        {
+            if (e == null) continue;
+            e.Phrase ??= "";
+            e.Expansion ??= "";
+            list.Add(e);
+        }
+        return list;
+    }
+
     public void Replace(IEnumerable<SnippetEntry> entries)
     {
+        entries = Sanitize(entries);
         lock (_sync)
         {
             _entries = entries

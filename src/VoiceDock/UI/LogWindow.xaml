@@ -1,12 +1,12 @@
 <Window x:Class="VoiceDock.UI.LogWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="VoiceDock ログ"
-        Width="680" Height="500" MinWidth="480" MinHeight="320"
+        Title="VoiceDock のログ"
+        Width="760" Height="540" MinWidth="520" MinHeight="340"
         Style="{StaticResource WindowStyle}"
         WindowStartupLocation="CenterScreen"
         Closed="Window_Closed">
-    <Grid Margin="20,16">
+    <Grid Margin="24,20,24,18">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="Auto"/>
@@ -14,15 +14,16 @@
             <RowDefinition Height="Auto"/>
         </Grid.RowDefinitions>
 
-        <TextBlock Grid.Row="0" Text="ログ" FontSize="18" FontWeight="Bold"/>
-        <Grid Grid.Row="1" Margin="0,8,0,10">
+        <TextBlock Grid.Row="0" Text="ログ" Style="{StaticResource PageTitle}"/>
+        <Grid Grid.Row="1" Margin="0,8,0,12">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="*"/>
                 <ColumnDefinition Width="Auto"/>
             </Grid.ColumnDefinitions>
             <TextBlock Grid.Column="0" Style="{StaticResource SubText}" VerticalAlignment="Center"
-                       Text="エラー・動作ログと認識テキストの履歴（ファイルには 30 日分保存）"/>
-            <ComboBox Grid.Column="1" x:Name="FilterCombo" Width="150"
+                       Text="動作の記録です（ファイルには 30 日分を残します）。うまく動かないときの手がかりになります。"/>
+            <ComboBox Grid.Column="1" x:Name="FilterCombo" Width="170" Margin="12,0,0,0"
+                      AutomationProperties.Name="表示する種類"
                       SelectionChanged="FilterCombo_SelectionChanged"/>
         </Grid>
 
@@ -39,10 +40,12 @@
                        Text="表示できるログがありません。"/>
         </Grid>
 
-        <StackPanel Grid.Row="3" Orientation="Horizontal" Margin="0,12,0,0">
-            <Button Content="選択行をコピー" Click="CopySelected_Click"/>
-            <Button Content="ログフォルダを開く" Margin="8,0,0,0" Click="OpenFolder_Click"/>
-            <Button Content="ログをすべて削除" Margin="8,0,0,0" Click="DeleteLogs_Click"/>
-        </StackPanel>
+        <WrapPanel Grid.Row="3" Margin="0,12,0,0">
+            <Button Content="コピー" Margin="0,0,8,4" Click="CopySelected_Click"
+                    ToolTip="選んだ行をコピーします。何も選んでいなければ、表示中のすべての行をコピーします（問い合わせに貼り付けるときに使えます）"/>
+            <Button Content="ログの保存先を開く" Margin="0,0,8,4" Click="OpenFolder_Click"/>
+            <Button Content="ログをすべて消す…" Margin="0,0,8,4" Click="DeleteLogs_Click"
+                    Style="{StaticResource DangerButton}"/>
+        </WrapPanel>
     </Grid>
 </Window>

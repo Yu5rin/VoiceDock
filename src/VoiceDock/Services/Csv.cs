@@ -25,7 +25,7 @@ internal static class Csv
     /// </summary>
     public static List<string[]> Read(string path, int columns, Func<string[], bool> isHeader)
     {
-        var text = File.ReadAllText(path, Encoding.UTF8);
+        var text = ReadText(path);
         var result = new List<string[]>();
         foreach (var row in Parse(text))
         {
@@ -35,6 +35,26 @@ internal static class Csv
             result.Add(cells);
         }
         return result;
+    }
+
+    /// <summary>
+    /// CSV を文字として読む。UTF-8 として読めなければ、Excel が保存する Shift-JIS として読み直す
+    /// （UTF-8 と決めつけて読むと、Excel で保存し直した CSV が文字化けしたまま取り込まれ、
+    /// 辞書がまるごと化けた内容に置き換わってしまう）。
+    /// </summary>
+    internal static string ReadText(string path)
+    {
+        var bytes = File.ReadAllBytes(path);
+        try
+        {
+            return new UTF8Encoding(encoderShouldEmitUTF8Identifier: false, throwOnInvalidBytes: true)
+                .GetString(bytes).TrimStart('\uFEFF');
+        }
+        catch (DecoderFallbackException)
+        {
+            Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+            return Encoding.GetEncoding(932).GetString(bytes);
+        }
     }
 
     private static void AppendRow(StringBuilder sb, IReadOnlyList<string> cells)
